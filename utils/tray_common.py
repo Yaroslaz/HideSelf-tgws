@@ -60,12 +60,6 @@ def _same_process(meta: dict, proc: psutil.Process, script_hint: str) -> bool:
         return False
     if IS_FROZEN:
         return APP_NAME.lower() in proc.name().lower()
-    try:
-        for arg in proc.cmdline():
-            if script_hint in arg:
-                return True
-    except Exception:
-        pass
     return False
 
 
@@ -76,7 +70,10 @@ def acquire_lock(script_hint: str = "") -> bool:
         try:
             pid = int(f.stem)
         except Exception:
-            f.unlink(missing_ok=True)
+            try:
+                f.unlink(missing_ok=True)
+            except OSError:
+                pass
             continue
         meta: dict = {}
         try:
@@ -85,12 +82,17 @@ def acquire_lock(script_hint: str = "") -> bool:
                 meta = json.loads(raw)
         except Exception:
             pass
+        is_running = False
         try:
-            if _same_process(meta, psutil.Process(pid), script_hint):
-                return False
+            is_running = _same_process(meta, psutil.Process(pid), script_hint)
         except Exception:
             pass
-        f.unlink(missing_ok=True)
+        if is_running:
+            return False
+        try:
+            f.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     lock_file = APP_DIR / f"{os.getpid()}.lock"
     try:
@@ -100,7 +102,10 @@ def acquire_lock(script_hint: str = "") -> bool:
             encoding="utf-8",
         )
     except Exception:
-        lock_file.touch()
+        try:
+            lock_file.touch()
+        except Exception:
+            pass
     _lock_file_path = lock_file
     return True
 
