@@ -606,6 +606,10 @@ class _WsPool:
                 self._schedule_refill((dc, is_media), target_ip, domains)
         log.info("WS pool warmup started for %d DC(s)", len(dc_redirects))
 
+    def reset(self):
+        self._idle.clear()
+        self._refilling.clear()
+
 _ws_pool = _WsPool()
 
 
@@ -1103,6 +1107,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     global _server_instance, _server_stop_event
     _server_stop_event = stop_event
 
+    _ws_pool.reset()
     ws_blacklist.clear()
     dc_fail_until.clear()
 
