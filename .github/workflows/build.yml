@@ -1,6 +1,9 @@
 name: Build & Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       make_release:
@@ -312,7 +315,7 @@ jobs:
       - name: Create .deb package
         run: |
           set -euo pipefail
-          VERSION="${{ github.event.inputs.version }}"
+          VERSION="${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}"
           VERSION="${VERSION#v}"
           PKG_ROOT="pkg"
 
@@ -375,7 +378,7 @@ jobs:
   release:
     needs: [build-windows, build-win7, build-macos, build-linux]
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.make_release == 'true' }}
+    if: ${{ github.event_name == 'push' || github.event.inputs.make_release == 'true' }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -386,10 +389,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.version }}
-          name: "TG WS Proxy ${{ github.event.inputs.version }}"
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}
+          name: "TG WS Proxy ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}"
           body: |
-            ## TG WS Proxy ${{ github.event.inputs.version }}
+            ## TG WS Proxy ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}
           files: |
             dist/TgWsProxy_windows.exe
             dist/hideself-tgws_windows.exe
