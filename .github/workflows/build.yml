@@ -69,11 +69,17 @@ jobs:
       - name: Rename artifact
         run: mv dist/TgWsProxy.exe dist/TgWsProxy_windows.exe
 
+      - name: Create HideSelf-compatible asset alias
+        shell: pwsh
+        run: Copy-Item dist/TgWsProxy_windows.exe dist/hideself-tgws_windows.exe -Force
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: TgWsProxy
-          path: dist/TgWsProxy_windows.exe
+          path: |
+            dist/TgWsProxy_windows.exe
+            dist/hideself-tgws_windows.exe
 
   build-win7:
     runs-on: windows-latest
@@ -386,6 +392,7 @@ jobs:
             ## TG WS Proxy ${{ github.event.inputs.version }}
           files: |
             dist/TgWsProxy_windows.exe
+            dist/hideself-tgws_windows.exe
             dist/TgWsProxy_windows_7_64bit.exe
             dist/TgWsProxy_windows_7_32bit.exe
             dist/TgWsProxy_macos_universal.dmg
