@@ -57,19 +57,42 @@ jobs:
     needs: [build-windows-runtime]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v8
         with:
           pattern: hideself-tgws-runtime
           path: dist
           merge-multiple: true
 
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}"
+          {
+            echo "# HideSelf TGWS Runtime ${TAG}"
+            echo
+            echo "Managed TG WS runtime artifact for HideSelf."
+            echo
+            if [ -f ".hideself/upstream-changelog.md" ]; then
+              echo "## Upstream Author Changelog"
+              echo
+              cat .hideself/upstream-changelog.md
+            else
+              echo "## Upstream Author Changelog"
+              echo
+              echo "Changelog file not found in repository for this build."
+            fi
+          } > RELEASE_NOTES.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}
           name: "HideSelf TGWS Runtime ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}"
-          body: |
-            Headless TG WS runtime artifact for HideSelf managed mode.
+          body_path: RELEASE_NOTES.md
           files: |
             dist/hideself-tgws_windows.exe
           draft: false

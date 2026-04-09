@@ -1,0 +1,203 @@
+name: Sync Upstream and Open PR
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM_REPO: https://github.com/Flowseal/tg-ws-proxy.git
+  BASE_BRANCH: main
+  REVIEWER: Yaroslaz
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add and fetch upstream
+        run: |
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream "$UPSTREAM_REPO"
+          else
+            git remote add upstream "$UPSTREAM_REPO"
+          fi
+          git fetch origin "$BASE_BRANCH" --tags --force
+          git fetch upstream --tags --force
+
+      - name: Resolve latest upstream tag
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LATEST_TAG=$(git ls-remote --refs --tags upstream | awk '{print $2}' | sed 's#refs/tags/##' | sort -V | tail -n 1)
+          if [ -z "${LATEST_TAG:-}" ]; then
+            echo "Не удалось определить последний тег upstream."
+            exit 1
+          fi
+
+          TAG_SHA=$(git rev-list -n 1 "$LATEST_TAG")
+          SAFE_TAG=$(echo "$LATEST_TAG" | tr -cs '[:alnum:]._-' '-')
+          SYNC_BRANCH="sync/${SAFE_TAG}"
+
+          if git merge-base --is-ancestor "$TAG_SHA" "origin/$BASE_BRANCH"; then
+            UPDATE_NEEDED=false
+          else
+            UPDATE_NEEDED=true
+          fi
+
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "tag_sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
+          echo "sync_branch=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "update_needed=$UPDATE_NEEDED" >> "$GITHUB_OUTPUT"
+
+      - name: Stop when no update is needed
+        if: steps.resolve.outputs.update_needed == 'false'
+        run: |
+          echo "Upstream tag ${{ steps.resolve.outputs.latest_tag }} уже в $BASE_BRANCH. Синхронизация не требуется."
+
+      - name: Merge upstream tag into sync branch
+        if: steps.resolve.outputs.update_needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LATEST_TAG="${{ steps.resolve.outputs.latest_tag }}"
+          git checkout -B "${{ steps.resolve.outputs.sync_branch }}" "origin/$BASE_BRANCH"
+          git merge --no-ff --no-edit "$LATEST_TAG"
+
+          mkdir -p .hideself
+          RELEASE_JSON=$(gh api "repos/Flowseal/tg-ws-proxy/releases/tags/${LATEST_TAG}" || true)
+          if [ -n "${RELEASE_JSON:-}" ]; then
+            RELEASE_TITLE=$(echo "$RELEASE_JSON" | jq -r '.name // empty')
+            RELEASE_URL=$(echo "$RELEASE_JSON" | jq -r '.html_url // empty')
+            RELEASE_PUBLISHED=$(echo "$RELEASE_JSON" | jq -r '.published_at // empty')
+            RELEASE_BODY=$(echo "$RELEASE_JSON" | jq -r '.body // ""')
+          else
+            RELEASE_TITLE=""
+            RELEASE_URL="https://github.com/Flowseal/tg-ws-proxy/releases/tag/${LATEST_TAG}"
+            RELEASE_PUBLISHED=""
+            RELEASE_BODY="Changelog upstream релиза не удалось получить автоматически."
+          fi
+
+          jq -n \
+            --arg tag "$LATEST_TAG" \
+            --arg title "$RELEASE_TITLE" \
+            --arg url "$RELEASE_URL" \
+            --arg published_at "$RELEASE_PUBLISHED" \
+            --arg body "$RELEASE_BODY" \
+            '{
+              upstream: "Flowseal/tg-ws-proxy",
+              tag: $tag,
+              title: ($title | select(length > 0)),
+              url: ($url | select(length > 0)),
+              published_at: ($published_at | select(length > 0)),
+              body: $body
+            }' > .hideself/upstream-changelog.json
+
+          {
+            echo "# Upstream Changelog (${LATEST_TAG})"
+            echo
+            if [ -n "$RELEASE_TITLE" ]; then
+              echo "**Title:** $RELEASE_TITLE"
+              echo
+            fi
+            if [ -n "$RELEASE_URL" ]; then
+              echo "**Source:** $RELEASE_URL"
+              echo
+            fi
+            if [ -n "$RELEASE_PUBLISHED" ]; then
+              echo "**Published at:** $RELEASE_PUBLISHED"
+              echo
+            fi
+            echo "## Notes"
+            echo
+            echo "$RELEASE_BODY"
+            echo
+          } > .hideself/upstream-changelog.md
+
+          git add .hideself/upstream-changelog.json .hideself/upstream-changelog.md
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(sync): import upstream changelog ${LATEST_TAG}"
+          fi
+
+          git push --force-with-lease origin "${{ steps.resolve.outputs.sync_branch }}"
+
+      - name: Create or update PR and request review
+        if: steps.resolve.outputs.update_needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SYNC_BRANCH="${{ steps.resolve.outputs.sync_branch }}"
+          LATEST_TAG="${{ steps.resolve.outputs.latest_tag }}"
+
+          PR_NUMBER=$(gh pr list \
+            --state open \
+            --head "$SYNC_BRANCH" \
+            --base "$BASE_BRANCH" \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [ -z "${PR_NUMBER:-}" ]; then
+            PR_BODY_FILE=$(mktemp)
+            {
+              echo "Automated sync from upstream tag \`${LATEST_TAG}\`."
+              echo
+              echo "- Source: ${UPSTREAM_REPO}"
+              echo "- Target: \`${BASE_BRANCH}\`"
+              echo "- Next step after merge: Build & Release publishes \`hideself-tgws_windows.exe\`."
+              echo
+              echo "## Upstream Changelog"
+              if [ -f ".hideself/upstream-changelog.md" ]; then
+                sed -n '1,180p' .hideself/upstream-changelog.md
+              else
+                echo "Changelog file not found."
+              fi
+            } > "$PR_BODY_FILE"
+
+            gh pr create \
+              --base "$BASE_BRANCH" \
+              --head "$SYNC_BRANCH" \
+              --title "sync: upstream ${LATEST_TAG}" \
+              --body-file "$PR_BODY_FILE"
+
+            PR_NUMBER=$(gh pr list \
+              --state open \
+              --head "$SYNC_BRANCH" \
+              --base "$BASE_BRANCH" \
+              --json number \
+              --jq '.[0].number // empty')
+          fi
+
+          if [ -n "${PR_NUMBER:-}" ]; then
+            gh api \
+              --method POST \
+              "repos/${{ github.repository }}/pulls/${PR_NUMBER}/requested_reviewers" \
+              -f "reviewers[]=$REVIEWER" || true
+
+            gh pr edit "$PR_NUMBER" --add-assignee "$REVIEWER" || true
+            echo "PR #${PR_NUMBER}: reviewer request sent to ${REVIEWER}."
+          else
+            echo "Не удалось определить номер PR после создания."
+            exit 1
+          fi
