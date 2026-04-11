@@ -1,4 +1,4 @@
-name: Sync Upstream and Open PR
+name: Sync Upstream and Auto Release
 
 on:
   schedule:
@@ -7,12 +7,11 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 env:
   UPSTREAM_REPO: https://github.com/Flowseal/tg-ws-proxy.git
   BASE_BRANCH: main
-  REVIEWER: Yaroslaz
+  HS_TAG_PREFIX: v1.0.0-hs.
 
 jobs:
   sync-upstream:
@@ -20,7 +19,7 @@ jobs:
 
     steps:
       - name: Checkout fork
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -31,6 +30,7 @@ jobs:
 
       - name: Add and fetch upstream
         run: |
+          set -euo pipefail
           if git remote get-url upstream >/dev/null 2>&1; then
             git remote set-url upstream "$UPSTREAM_REPO"
           else
@@ -45,16 +45,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          LATEST_TAG=$(git ls-remote --refs --tags upstream | awk '{print $2}' | sed 's#refs/tags/##' | sort -V | tail -n 1)
+          LATEST_TAG=$(git tag --list --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
           if [ -z "${LATEST_TAG:-}" ]; then
-            echo "Не удалось определить последний тег upstream."
+            echo "Failed to resolve latest upstream tag."
             exit 1
           fi
 
           TAG_SHA=$(git rev-list -n 1 "$LATEST_TAG")
-          SAFE_TAG=$(echo "$LATEST_TAG" | tr -cs '[:alnum:]._-' '-')
-          SYNC_BRANCH="sync/${SAFE_TAG}"
-
           if git merge-base --is-ancestor "$TAG_SHA" "origin/$BASE_BRANCH"; then
             UPDATE_NEEDED=false
           else
@@ -63,15 +60,22 @@ jobs:
 
           echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
           echo "tag_sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
-          echo "sync_branch=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
           echo "update_needed=$UPDATE_NEEDED" >> "$GITHUB_OUTPUT"
 
       - name: Stop when no update is needed
         if: steps.resolve.outputs.update_needed == 'false'
         run: |
-          echo "Upstream tag ${{ steps.resolve.outputs.latest_tag }} уже в $BASE_BRANCH. Синхронизация не требуется."
+          echo "Upstream tag ${{ steps.resolve.outputs.latest_tag }} is already included in $BASE_BRANCH."
 
-      - name: Merge upstream tag into sync branch
+      - name: Merge upstream tag into main
+        if: steps.resolve.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
+          git merge --no-ff --no-edit "${{ steps.resolve.outputs.latest_tag }}"
+
+      - name: Capture upstream changelog
         if: steps.resolve.outputs.update_needed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -80,10 +84,8 @@ jobs:
           set -euo pipefail
 
           LATEST_TAG="${{ steps.resolve.outputs.latest_tag }}"
-          git checkout -B "${{ steps.resolve.outputs.sync_branch }}" "origin/$BASE_BRANCH"
-          git merge --no-ff --no-edit "$LATEST_TAG"
-
           mkdir -p .hideself
+
           RELEASE_JSON=$(gh api "repos/Flowseal/tg-ws-proxy/releases/tags/${LATEST_TAG}" || true)
           if [ -n "${RELEASE_JSON:-}" ]; then
             RELEASE_TITLE=$(echo "$RELEASE_JSON" | jq -r '.name // empty')
@@ -94,7 +96,7 @@ jobs:
             RELEASE_TITLE=""
             RELEASE_URL="https://github.com/Flowseal/tg-ws-proxy/releases/tag/${LATEST_TAG}"
             RELEASE_PUBLISHED=""
-            RELEASE_BODY="Changelog upstream релиза не удалось получить автоматически."
+            RELEASE_BODY="Failed to fetch upstream changelog automatically."
           fi
 
           jq -n \
@@ -138,66 +140,36 @@ jobs:
             git commit -m "chore(sync): import upstream changelog ${LATEST_TAG}"
           fi
 
-          git push --force-with-lease origin "${{ steps.resolve.outputs.sync_branch }}"
-
-      - name: Create or update PR and request review
+      - name: Calculate next HideSelf release tag
         if: steps.resolve.outputs.update_needed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        id: hs-tag
         shell: bash
         run: |
           set -euo pipefail
 
-          SYNC_BRANCH="${{ steps.resolve.outputs.sync_branch }}"
-          LATEST_TAG="${{ steps.resolve.outputs.latest_tag }}"
-
-          PR_NUMBER=$(gh pr list \
-            --state open \
-            --head "$SYNC_BRANCH" \
-            --base "$BASE_BRANCH" \
-            --json number \
-            --jq '.[0].number // empty')
-
-          if [ -z "${PR_NUMBER:-}" ]; then
-            PR_BODY_FILE=$(mktemp)
-            {
-              echo "Automated sync from upstream tag \`${LATEST_TAG}\`."
-              echo
-              echo "- Source: ${UPSTREAM_REPO}"
-              echo "- Target: \`${BASE_BRANCH}\`"
-              echo "- Next step after merge: Build & Release publishes \`hideself-tgws_windows.exe\`."
-              echo
-              echo "## Upstream Changelog"
-              if [ -f ".hideself/upstream-changelog.md" ]; then
-                sed -n '1,180p' .hideself/upstream-changelog.md
-              else
-                echo "Changelog file not found."
-              fi
-            } > "$PR_BODY_FILE"
-
-            gh pr create \
-              --base "$BASE_BRANCH" \
-              --head "$SYNC_BRANCH" \
-              --title "sync: upstream ${LATEST_TAG}" \
-              --body-file "$PR_BODY_FILE"
-
-            PR_NUMBER=$(gh pr list \
-              --state open \
-              --head "$SYNC_BRANCH" \
-              --base "$BASE_BRANCH" \
-              --json number \
-              --jq '.[0].number // empty')
-          fi
-
-          if [ -n "${PR_NUMBER:-}" ]; then
-            gh api \
-              --method POST \
-              "repos/${{ github.repository }}/pulls/${PR_NUMBER}/requested_reviewers" \
-              -f "reviewers[]=$REVIEWER" || true
-
-            gh pr edit "$PR_NUMBER" --add-assignee "$REVIEWER" || true
-            echo "PR #${PR_NUMBER}: reviewer request sent to ${REVIEWER}."
+          LAST_HS_TAG=$(git tag --list "${HS_TAG_PREFIX}*" --sort=-v:refname | head -n 1 || true)
+          if [ -z "${LAST_HS_TAG:-}" ]; then
+            NEXT_NUMBER=1
           else
-            echo "Не удалось определить номер PR после создания."
-            exit 1
+            LAST_NUMBER="${LAST_HS_TAG#${HS_TAG_PREFIX}}"
+            NEXT_NUMBER=$((LAST_NUMBER + 1))
           fi
+
+          NEXT_TAG="${HS_TAG_PREFIX}${NEXT_NUMBER}"
+          echo "next_tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Push main and release tag
+        if: steps.resolve.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NEXT_TAG="${{ steps.hs-tag.outputs.next_tag }}"
+          git push origin "$BASE_BRANCH"
+          git tag -a "$NEXT_TAG" -m "HideSelf TGWS runtime release ${NEXT_TAG} (upstream ${{ steps.resolve.outputs.latest_tag }})"
+          git push origin "refs/tags/${NEXT_TAG}"
+
+      - name: Summary
+        if: steps.resolve.outputs.update_needed == 'true'
+        run: |
+          echo "Synced upstream ${{ steps.resolve.outputs.latest_tag }} into $BASE_BRANCH and created release tag ${{ steps.hs-tag.outputs.next_tag }}."
