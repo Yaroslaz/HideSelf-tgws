@@ -2,9 +2,10 @@
 >
 > ### 🎉 Поддержать меня
 >
-> USDT (TRC20): `TXPnKs2Ww1RD8JN6nChFUVmi5r2hqrWjuu`  
-> BTC: `bc1qr8vd6jelkyyry3m4mq6z5txdx4pl856fu6ss0w`  
-> ETH: `0x1417878fdc5047E670a77748B34819b9A49C72F1`  
+> **USDT (TRC20)**: `TXPnKs2Ww1RD8JN6nChFUVmi5r2hqrWjuu`  
+> **BTC**: `bc1qr8vd6jelkyyry3m4mq6z5txdx4pl856fu6ss0w`  
+> **ETH**: `0x1417878fdc5047E670a77748B34819b9A49C72F1`  
+> **Другие монеты**: https://nowpayments.io/donation/flowseal
 
 > [!CAUTION]
 >
@@ -38,7 +39,9 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 
 > [!IMPORTANT] 
 > ### Не грузит фото/видео?
-> ### Удалите в настройках прокси в DC->IP всё, кроме `4:149.154.167.220`
+> **Удалите в настройках прокси в DC->IP всё, кроме `4:149.154.167.220`**  
+> **Если не помогло, то удалите вообще всё из этого поля**  
+> ####
 > Подобная проблема встречается на аккаунтах без Premium  
 > Если вам не помогло, то настраивайте свой домен по гайду отсюда: https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md
 
@@ -53,6 +56,7 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 **Меню трея:**
 
 - **Открыть в Telegram** — автоматически настроить прокси через `tg://proxy` ссылку
+- **Скопировать ссылку** — скопировать ссылку для подключения
 - **Перезапустить прокси** — перезапуск без выхода из приложения
 - **Настройки...** — GUI-редактор конфигурации (в т.ч. версия приложения, опциональная проверка обновлений с GitHub)
 - **Открыть логи** — открыть файл логов
@@ -60,6 +64,26 @@ Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket → Telegram D
 
 При первом запуске после старта может появиться запрос об открытии страницы релиза, если на GitHub вышла новая версия (отключается в настройках).
 
+### Настройка Telegram Desktop
+
+### Автоматически:
+
+ПКМ по иконке в трее → **«Открыть в Telegram»**  
+Если не сработало (не открылся Telegram с подключением), то:
+1. ПКМ по иконке в трее → **«Скопировать ссылку»** 
+2. Отправьте ссылку себе в избранное в Telegram клиенте и нажмите по ней ЛКМ
+3. Подключитесь
+
+### Вручную:
+
+1. Telegram → **Настройки** → **Продвинутые настройки** → **Тип подключения** → **Прокси**
+2. Добавить прокси:
+   - **Тип:** MTProto
+   - **Сервер:** `127.0.0.1` (или переопределенный вами)
+   - **Порт:** `1443` (или переопределенный вами)
+   - **Secret:** из настроек или логов
+
+##
 ### macOS
 
 Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте **`TgWsProxy_macos_universal.dmg`** — универсальная сборка для Apple Silicon и Intel.
@@ -146,6 +170,8 @@ tg-ws-proxy [--port PORT] [--host HOST] [--dc-ip DC:IP ...] [-v]
 | `--no-cfproxy` | `false` | Отключить попытку [проксирования через Cloudflare]((https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md)) |
 | `--cfproxy-domain` | | Указать свой домен для проксирования через Cloudfalre. [Подробнее тут](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfProxy.md) |
 | `--cfproxy-priority` | `true` | Пробовать проксировать через Cloudflare перед прямым TCP подключением |
+| `--fake-tls-domain` | | Включить Fake TLS (ee-secret) маскировку с указанным SNI-доменом |
+| `--proxy-protocol` | выкл. | Принимать HAProxy PROXY protocol v1 (для работы за nginx/haproxy с `proxy_protocol on`) |
 | `--buf-kb` | `256` | Размер буфера в КБ |
 | `--pool-size` | `4` | Количество заготовленных соединений на каждый DC |
 | `--log-file` | выкл. | Путь до файла, в который сохранять логи  |
@@ -164,38 +190,64 @@ tg-ws-proxy --port 9050 --dc-ip 1:149.154.175.205 --dc-ip 2:149.154.167.220
 
 # С подробным логированием
 tg-ws-proxy -v
+
+# Fake TLS маскировка (ee-secret)
+tg-ws-proxy --fake-tls-domain example.com
 ```
 
-## CLI-скрипты (pyproject.toml)
+## Fake TLS + nginx upstream
+### Домен (`--fake-tls-domain`) должен указывать на тот же IP, на котором стоит прокси
 
-CLI команды объявляются в `pyproject.toml` в секции `[project.scripts]` и должны указывать на `module:function`.
+**Пример `nginx.conf` (stream):**
 
-Пример:
+```nginx
+upstream mtproto {
+    server 127.0.0.1:8446;
+}
 
-```toml
-[project.scripts]
-tg-ws-proxy = "proxy.tg_ws_proxy:main"
-tg-ws-proxy-tray-win = "windows:main"
-tg-ws-proxy-tray-macos = "macos:main"
-tg-ws-proxy-tray-linux = "linux:main"
+map $ssl_preread_server_name $sni_name {
+    hostnames;
+    example.com mtproto;
+    # if you have xray with selfsni running:
+    # sub.example.com  www;
+    # default xray;
+}
+
+# upstream xray {
+#     server 127.0.0.1:8443;
+# }
+# 
+# upstream www {
+#     server 127.0.0.1:7443;
+# }
+
+server {
+    proxy_protocol on;
+    set_real_ip_from unix:;
+    listen          443;
+    proxy_pass      $sni_name;
+    ssl_preread     on;
+}
 ```
 
-## Настройка Telegram Desktop
+**Запуск прокси за nginx:**
 
-### Автоматически
+```bash
+python3 proxy/tg_ws_proxy.py \
+  --port 8446 \
+  --host 127.0.0.1 \
+  --fake-tls-domain example.com \
+  --proxy-protocol \
+  --secret <32-hex-chars>
+```
 
-ПКМ по иконке в трее → **«Открыть в Telegram»**
+Ссылка для подключения будет в формате `ee`-секрета:</p>
 
-### Вручную
+```
+tg://proxy?server=your.domain.com&port=443&secret=ee<secret><domain_hex>
+```
 
-1. Telegram → **Настройки** → **Продвинутые настройки** → **Тип подключения** → **Прокси**
-2. Добавить прокси:
-   - **Тип:** MTProto
-   - **Сервер:** `127.0.0.1` (или переопределенный вами)
-   - **Порт:** `1443` (или переопределенный вами)
-   - **Secret:** из настроек или логов
-
-## Конфигурация
+## Файлы конфигурации Tray-приложения
 
 Tray-приложение хранит данные в:
 
@@ -216,7 +268,11 @@ Tray-приложение хранит данные в:
   "buf_kb": 256,
   "pool_size": 4,
   "log_max_mb": 5.0,
-  "check_updates": true
+  "check_updates": true,
+  "cfproxy": true,
+  "cfproxy_priority": true,
+  "cfproxy_user_domain": "",
+  "appearance": "auto"
 }
 ```
 

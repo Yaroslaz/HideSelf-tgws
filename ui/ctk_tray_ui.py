@@ -5,9 +5,10 @@ import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-import proxy.tg_ws_proxy as tg_ws_proxy
-from proxy import __version__
+from proxy import __version__, get_link_host, parse_dc_ip_list
+from proxy.config import proxy_config
 from utils.update_check import RELEASES_PAGE_URL, get_status
+
 
 from ui.ctk_theme import (
     FIRST_RUN_FRAME_PAD,
@@ -58,7 +59,11 @@ _TIP_CFPROXY_PRIORITY = (
     "Пробовать CF-прокси раньше прямого TCP-подключения"
 )
 _TIP_CFPROXY_DOMAIN = (
-    "Домен, проксируемый через Cloudflare, для WS-подключения"
+    "Ваш собственный домен, проксируемый через Cloudflare, для WS-подключения.\n"
+    "Если не указан — выбирается автоматически из поддерживаемых доменов"
+)
+_TIP_CFPROXY_USER_DOMAIN_CB = (
+    "Указать свой домен вместо автоматического выбора"
 )
 _TIP_SAVE = "Сохранить настройки"
 _TIP_CANCEL = "Закрыть окно без сохранения изменений"
@@ -115,6 +120,22 @@ def _run_cfproxy_connectivity_test(domain: str) -> dict:
     return results
 
 
+def _run_cfproxy_auto_test(domains: list) -> tuple:
+    merged: dict = {}
+    best_domain = None
+    for domain in reversed(domains):
+        res = _run_cfproxy_connectivity_test(domain)
+        if all(v is True for v in res.values()):
+            return domain, res
+        for dc, v in res.items():
+            if v is True:
+                merged[dc] = True
+                best_domain = domain
+            elif dc not in merged:
+                merged[dc] = v
+    return best_domain, merged
+
+
 def _cfproxy_show_test_results(domain: str, results: dict) -> None:
     import tkinter as _tk
     from tkinter import messagebox as _mb
@@ -145,7 +166,34 @@ def _cfproxy_show_test_results(domain: str, results: dict) -> None:
     _mb.showinfo(title, msg, parent=root)
     root.destroy()
 
+
+def _cfproxy_show_auto_test_results(ok_domain, results: dict) -> None:
+    import tkinter as _tk
+    from tkinter import messagebox as _mb
+
+    if ok_domain is not None:
+        title = "CF-прокси: доступен"
+        ok = [dc for dc, v in results.items() if v is True]
+        msg = f"\u2713 CF-прокси работает. {len(ok)} из {len(_CFPROXY_TEST_DCS)} серверов доступны."
+    else:
+        title = "CF-прокси: недоступен"
+        msg = "\u2717 Ни один из автоматических CF-доменов не отвечает.\n"
+        msg += "Возможно, блокировка или проблемы с сетью."
+    root = _tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+    _mb.showinfo(title, msg, parent=root)
+    root.destroy()
+
 _INNER_W = 396
+
+_APPEARANCE_OPTIONS = ["Авто", "Светлая", "Тёмная"]
+_APPEARANCE_FROM_CFG = {"auto": "Авто", "light": "Светлая", "dark": "Тёмная"}
+_APPEARANCE_TO_CFG = {"Авто": "auto", "Светлая": "light", "Тёмная": "dark"}
+_APPEARANCE_TO_CTK = {"auto": "system", "light": "Light", "dark": "Dark"}
 
 
 def _entry(ctk, parent, theme, *, var=None, width=0, height=36, radius=10, **kw):
@@ -249,7 +297,8 @@ class TrayConfigFormWidgets:
     check_updates_var: Optional[Any]
     cfproxy_var: Optional[Any] = None
     cfproxy_priority_var: Optional[Any] = None
-    cfproxy_domain_var: Optional[Any] = None
+    cfproxy_user_domain_var: Optional[Any] = None
+    appearance_var: Optional[Any] = None
 
 
 def install_tray_config_form(
@@ -265,7 +314,7 @@ def install_tray_config_form(
     header = ctk.CTkFrame(frame, fg_color="transparent")
     header.pack(fill="x", pady=(0, 2))
     ctk.CTkLabel(
-        header, text="Настройки прокси",
+        header, text="Настройки",
         font=(theme.ui_font_family, 17, "bold"),
         text_color=theme.text_primary, anchor="w",
     ).pack(side="left")
@@ -273,7 +322,45 @@ def install_tray_config_form(
         header, text=f"v{__version__}",
         font=(theme.ui_font_family, 12),
         text_color=theme.text_secondary, anchor="e",
+    ).pack(side="right", padx=(4, 0))
+    appearance_var = ctk.StringVar(
+        value=_APPEARANCE_FROM_CFG.get(cfg.get("appearance", "auto"), "Авто")
+    )
+
+    def _on_appearance_change(choice: str) -> None:
+        cfg_val = _APPEARANCE_TO_CFG.get(choice, "auto")
+        ctk.set_appearance_mode(_APPEARANCE_TO_CTK[cfg_val])
+
+    ctk.CTkComboBox(
+        header,
+        values=_APPEARANCE_OPTIONS,
+        variable=appearance_var,
+        width=102,
+        height=28,
+        font=(theme.ui_font_family, 12),
+        text_color=theme.text_secondary,
+        fg_color=theme.field_bg,
+        border_color=theme.field_border,
+        button_color=theme.field_border,
+        button_hover_color=theme.text_secondary,
+        dropdown_fg_color=theme.field_bg,
+        dropdown_text_color=theme.text_primary,
+        dropdown_hover_color=theme.field_border,
+        corner_radius=8,
+        state="readonly",
+        command=_on_appearance_change,
     ).pack(side="right")
+
+    ctk.CTkButton(
+        header, text="Donate ♥", width=90, height=28,
+        font=(theme.ui_font_family, 13, "bold"), corner_radius=8,
+        fg_color="#22c55e", hover_color="#16a34a",
+        text_color="#ffffff", border_width=0,
+        command=lambda: (
+            header.winfo_toplevel().iconify(),
+            webbrowser.open("https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/README.md"),
+        ),
+    ).pack(side="right", padx=(0, 6))
 
     conn = _config_section(ctk, frame, theme, "Подключение MTProto")
 
@@ -331,7 +418,7 @@ def install_tray_config_form(
     cf_inner = _config_section(ctk, frame, theme, "Cloudflare Proxy")
 
     cf_row = ctk.CTkFrame(cf_inner, fg_color="transparent")
-    cf_row.pack(fill="x", pady=(0, 6))
+    cf_row.pack(fill="x", pady=(0, 4))
 
     cfproxy_var = ctk.BooleanVar(
         value=cfg.get("cfproxy", default_config.get("cfproxy", True))
@@ -343,60 +430,76 @@ def install_tray_config_form(
     cfproxy_priority_var = ctk.BooleanVar(
         value=cfg.get("cfproxy_priority", default_config.get("cfproxy_priority", True))
     )
-    cf_prio_cb = _checkbox(ctk, cf_row, theme, "Приоритет CF-прокси", cfproxy_priority_var)
+    cf_prio_cb = _checkbox(ctk, cf_row, theme, "Приоритет", cfproxy_priority_var)
     cf_prio_cb.pack(side="left")
     attach_ctk_tooltip(cf_prio_cb, _TIP_CFPROXY_PRIORITY)
-
-    cf_domain_row = ctk.CTkFrame(cf_inner, fg_color="transparent")
-    cf_domain_row.pack(fill="x")
-
-    cf_domain_col, cfproxy_domain_var = _labeled_entry(
-        ctk, cf_domain_row, theme, "Домен",
-        cfg.get("cfproxy_domain", default_config.get("cfproxy_domain", "pclead.co.uk")),
-        tip=_TIP_CFPROXY_DOMAIN, width=160, pack_fill=True,
-    )
-    cf_domain_col.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
     _cf_test_btn = [None]
 
     def _on_cf_test():
-        domain = cfproxy_domain_var.get().strip()
-        if not domain:
-            return
+        user_domain = cfproxy_user_domain_var.get().strip() if cf_custom_cb_var.get() else ""
         btn = _cf_test_btn[0]
         if btn:
             btn.configure(text="...", state="disabled")
         import threading as _threading
-        def _worker():
-            res = _run_cfproxy_connectivity_test(domain)
-            if btn:
-                btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
-                btn.after(0, lambda: _cfproxy_show_test_results(domain, res))
-        _threading.Thread(target=_worker, daemon=True).start()
+        if user_domain:
+            def _worker():
+                res = _run_cfproxy_connectivity_test(user_domain)
+                if btn:
+                    btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
+                    btn.after(0, lambda: _cfproxy_show_test_results(user_domain, res))
+            _threading.Thread(target=_worker, daemon=True).start()
+        else:
+            def _worker_auto():
+                ok_domain, res = _run_cfproxy_auto_test(proxy_config.cfproxy_domains)
+                if btn:
+                    btn.after(0, lambda: btn.configure(text="Тест", state="normal"))
+                    btn.after(0, lambda: _cfproxy_show_auto_test_results(ok_domain, res))
+            _threading.Thread(target=_worker_auto, daemon=True).start()
 
-    cf_test_col = ctk.CTkFrame(cf_domain_row, fg_color="transparent")
-    cf_test_col.pack(side="left", anchor="s", padx=(0, 6))
-    ctk.CTkLabel(cf_test_col, text="", font=(theme.ui_font_family, 12)).pack(pady=(0, 2))
     _cf_test_widget = ctk.CTkButton(
-        cf_test_col, text="Тест", width=56, height=36,
-        font=(theme.ui_font_family, 13), corner_radius=10,
+        cf_row, text="Тест", width=56, height=28,
+        font=(theme.ui_font_family, 13), corner_radius=8,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=_on_cf_test,
     )
-    _cf_test_widget.pack()
+    _cf_test_widget.pack(side="right")
     _cf_test_btn[0] = _cf_test_widget
 
-    cf_help_col = ctk.CTkFrame(cf_domain_row, fg_color="transparent")
-    cf_help_col.pack(side="left", anchor="s")
-    ctk.CTkLabel(cf_help_col, text="", font=(theme.ui_font_family, 12)).pack(pady=(0, 2))
+    cf_custom_row = ctk.CTkFrame(cf_inner, fg_color="transparent")
+    cf_custom_row.pack(fill="x")
+
+    saved_user_domain = cfg.get("cfproxy_user_domain", default_config.get("cfproxy_user_domain", ""))
+    cf_custom_cb_var = ctk.BooleanVar(value=bool(saved_user_domain))
+    cf_custom_cb = _checkbox(ctk, cf_custom_row, theme, "Свой домен", cf_custom_cb_var)
+    cf_custom_cb.pack(side="left", padx=(0, 10))
+    attach_ctk_tooltip(cf_custom_cb, _TIP_CFPROXY_USER_DOMAIN_CB)
+
     ctk.CTkButton(
-        cf_help_col, text="?", width=36, height=36,
-        font=(theme.ui_font_family, 18), corner_radius=10,
+        cf_custom_row, text="?", width=28, height=32,
+        font=(theme.ui_font_family, 14), corner_radius=8,
         fg_color=theme.tg_blue, hover_color=theme.tg_blue_hover,
         text_color="#ffffff", border_width=1, border_color=theme.field_border,
         command=lambda: webbrowser.open(_CFPROXY_HELP_URL),
-    ).pack()
+    ).pack(side="right")
+
+    cfproxy_user_domain_var = ctk.StringVar(value=saved_user_domain)
+    cf_domain_entry = _entry(
+        ctk, cf_custom_row, theme, var=cfproxy_user_domain_var,
+        height=32, radius=8,
+    )
+    cf_domain_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+    attach_ctk_tooltip(cf_domain_entry, _TIP_CFPROXY_DOMAIN)
+
+    def _sync_domain_entry(*_):
+        state = "normal" if cf_custom_cb_var.get() else "disabled"
+        cf_domain_entry.configure(state=state)
+        if not cf_custom_cb_var.get():
+            cfproxy_user_domain_var.set("")
+
+    cf_custom_cb_var.trace_add("write", _sync_domain_entry)
+    _sync_domain_entry()
 
     log_inner = _config_section(ctk, frame, theme, "Логи и производительность")
 
@@ -488,7 +591,8 @@ def install_tray_config_form(
         autostart_var=autostart_var, check_updates_var=check_updates_var,
         cfproxy_var=cfproxy_var,
         cfproxy_priority_var=cfproxy_priority_var,
-        cfproxy_domain_var=cfproxy_domain_var,
+        cfproxy_user_domain_var=cfproxy_user_domain_var,
+        appearance_var=appearance_var,
     )
 
 
@@ -536,7 +640,7 @@ def validate_config_form(
         if line.strip()
     ]
     try:
-        tg_ws_proxy.parse_dc_ip_list(lines)
+        parse_dc_ip_list(lines)
     except ValueError as e:
         return str(e)
 
@@ -569,10 +673,10 @@ def validate_config_form(
         new_cfg["cfproxy"] = bool(widgets.cfproxy_var.get())
     if widgets.cfproxy_priority_var is not None:
         new_cfg["cfproxy_priority"] = bool(widgets.cfproxy_priority_var.get())
-    if widgets.cfproxy_domain_var is not None:
-        domain = widgets.cfproxy_domain_var.get().strip()
-        if domain:
-            new_cfg["cfproxy_domain"] = domain
+    if widgets.cfproxy_user_domain_var is not None:
+        new_cfg["cfproxy_user_domain"] = widgets.cfproxy_user_domain_var.get().strip()
+    if widgets.appearance_var is not None:
+        new_cfg["appearance"] = _APPEARANCE_TO_CFG.get(widgets.appearance_var.get(), "auto")
     return new_cfg
 
 
@@ -621,7 +725,7 @@ def populate_first_run_window(
     secret: str,
     on_done: Callable[[bool], None],
 ) -> None:
-    link_host = tg_ws_proxy.get_link_host(host)
+    link_host = get_link_host(host)
     tg_url = f"tg://proxy?server={link_host}&port={port}&secret=dd{secret}"
     fpx, fpy = FIRST_RUN_FRAME_PAD
     frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)

@@ -71,3 +71,6 @@ packages = ["proxy", "ui", "utils"]
 
 [tool.hatch.version]
 path = "proxy/__init__.py"
+
+[tool.ruff.lint]
+ignore = ["F403", "F405"]

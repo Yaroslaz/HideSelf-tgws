@@ -14,8 +14,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import psutil
 
-import proxy.tg_ws_proxy as tg_ws_proxy
-from proxy import __version__
+from proxy import __version__, get_link_host, parse_dc_ip_list, proxy_config
+from proxy.tg_ws_proxy import _run
 from utils.default_config import default_tray_config
 
 log = logging.getLogger("tg-ws-tray")
@@ -153,6 +153,7 @@ def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     root = logging.getLogger()
     root.setLevel(level)
+    logging.getLogger('asyncio').setLevel(logging.WARNING)
 
     fh = logging.handlers.RotatingFileHandler(
         str(LOG_FILE),
@@ -239,7 +240,7 @@ def _run_proxy_thread(on_port_busy: Callable[[str], None]) -> None:
     _async_stop = (loop, stop_ev)
 
     try:
-        loop.run_until_complete(tg_ws_proxy._run(stop_event=stop_ev))
+        loop.run_until_complete(_run(stop_event=stop_ev))
     except Exception as exc:
         log.error("Proxy thread crashed: %s", exc)
         if "Address already in use" in str(exc) or "10048" in str(exc):
@@ -257,12 +258,12 @@ def _run_proxy_thread(on_port_busy: Callable[[str], None]) -> None:
 def apply_proxy_config(cfg: dict) -> bool:
     dc_ip_list = cfg.get("dc_ip", DEFAULT_CONFIG["dc_ip"])
     try:
-        dc_redirects = tg_ws_proxy.parse_dc_ip_list(dc_ip_list)
+        dc_redirects = parse_dc_ip_list(dc_ip_list)
     except ValueError as e:
         log.error("Bad config dc_ip: %s", e)
         return False
 
-    pc = tg_ws_proxy.proxy_config
+    pc = proxy_config
     pc.port = cfg.get("port", DEFAULT_CONFIG["port"])
     pc.host = cfg.get("host", DEFAULT_CONFIG["host"])
     pc.secret = cfg.get("secret", DEFAULT_CONFIG["secret"])
@@ -271,7 +272,7 @@ def apply_proxy_config(cfg: dict) -> bool:
     pc.pool_size = max(0, cfg.get("pool_size", DEFAULT_CONFIG["pool_size"]))
     pc.fallback_cfproxy = cfg.get("cfproxy", DEFAULT_CONFIG["cfproxy"])
     pc.fallback_cfproxy_priority = cfg.get("cfproxy_priority", DEFAULT_CONFIG["cfproxy_priority"])
-    pc.fallback_cfproxy_domain = cfg.get("cfproxy_domain", DEFAULT_CONFIG["cfproxy_domain"])
+    pc.cfproxy_user_domain = cfg.get("cfproxy_user_domain", DEFAULT_CONFIG["cfproxy_user_domain"])
     return True
 
 
@@ -285,7 +286,7 @@ def start_proxy(cfg: dict, on_error: Callable[[str], None]) -> None:
         on_error("Ошибка конфигурации DC → IP.")
         return
 
-    pc = tg_ws_proxy.proxy_config
+    pc = proxy_config
     log.info("Starting proxy on %s:%d ...", pc.host, pc.port)
     _proxy_thread = threading.Thread(
         target=_run_proxy_thread, args=(on_error,), daemon=True, name="proxy"
@@ -315,7 +316,7 @@ def tg_proxy_url(cfg: dict) -> str:
     host = cfg.get("host", DEFAULT_CONFIG["host"])
     port = cfg.get("port", DEFAULT_CONFIG["port"])
     secret = cfg.get("secret", DEFAULT_CONFIG["secret"])
-    link_host = tg_ws_proxy.get_link_host(host)
+    link_host = get_link_host(host)
     return f"tg://proxy?server={link_host}&port={port}&secret=dd{secret}"
 
 
@@ -401,7 +402,7 @@ _ctk_root: Any = None
 _ctk_root_ready = threading.Event()
 
 
-def ensure_ctk_thread(ctk: Any) -> bool:
+def ensure_ctk_thread(ctk: Any, mode: str = "auto") -> bool:
     global _ctk_root
     if ctk is None:
         return False
@@ -413,7 +414,7 @@ def ensure_ctk_thread(ctk: Any) -> bool:
         from ui.ctk_theme import apply_ctk_appearance, install_tkinter_variable_del_guard
 
         install_tkinter_variable_del_guard()
-        apply_ctk_appearance(ctk)
+        apply_ctk_appearance(ctk, mode)
         _ctk_root = ctk.CTk()
         _ctk_root.withdraw()
         _ctk_root_ready.set()

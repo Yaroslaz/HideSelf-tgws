@@ -30,7 +30,7 @@ try:
 except ImportError:
     Image = None
 
-import proxy.tg_ws_proxy as tg_ws_proxy
+from proxy import get_link_host
 
 from utils.win32_theme import (
     is_windows_dark_theme, 
@@ -200,7 +200,7 @@ def _on_exit(icon=None, item=None) -> None:
 # settings dialog
 
 def _edit_config_dialog() -> None:
-    if not ensure_ctk_thread(ctk):
+    if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
         _show_error("customtkinter не установлен.")
         return
 
@@ -266,7 +266,7 @@ def _show_first_run() -> None:
     ensure_dirs()
     if FIRST_RUN_MARKER.exists():
         return
-    if not ensure_ctk_thread(ctk):
+    if not ensure_ctk_thread(ctk, _config.get("appearance", "auto")):
         FIRST_RUN_MARKER.touch()
         return
 
@@ -301,7 +301,7 @@ def _build_menu():
         return None
     host = _config.get("host", DEFAULT_CONFIG["host"])
     port = _config.get("port", DEFAULT_CONFIG["port"])
-    link_host = tg_ws_proxy.get_link_host(host)
+    link_host = get_link_host(host)
     return pystray.Menu(
         pystray.MenuItem(f"Открыть в Telegram ({link_host}:{port})", _on_open_in_telegram, default=True),
         pystray.MenuItem("Скопировать ссылку", _on_copy_link),
