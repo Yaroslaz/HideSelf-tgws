@@ -1,0 +1,8 @@
+{
+  "upstream": "Flowseal/tg-ws-proxy",
+  "tag": "v1.6.1",
+  "title": "TG WS Proxy v1.6.1",
+  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.6.1",
+  "published_at": "2026-04-11T18:30:26Z",
+  "body": "- Исправлено тестирование автоматических CF-прокси доменов\r\n- Увеличил количество стандартных доменов (больше доступность)\r\n- Fake TLS режим для CLI ([подробнее тут](https://github.com/Flowseal/tg-ws-proxy?tab=readme-ov-file#fake-tls--nginx-upstream))\r"
+}
