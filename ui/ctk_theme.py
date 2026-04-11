@@ -51,8 +51,11 @@ def ctk_theme_for_platform() -> CtkTheme:
     return CtkTheme()
 
 
-def apply_ctk_appearance(ctk: Any) -> None:
-    ctk.set_appearance_mode("auto")
+_APPEARANCE_MODE_MAP = {"auto": "system", "light": "Light", "dark": "Dark"}
+
+
+def apply_ctk_appearance(ctk: Any, mode: str = "auto") -> None:
+    ctk.set_appearance_mode(_APPEARANCE_MODE_MAP.get(mode, "system"))
     ctk.set_default_color_theme("blue")
 
 def center_ctk_geometry(root: Any, width: int, height: int) -> None:

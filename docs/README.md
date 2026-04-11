@@ -166,20 +166,6 @@ tg-ws-proxy --port 9050 --dc-ip 1:149.154.175.205 --dc-ip 2:149.154.167.220
 tg-ws-proxy -v
 ```
 
-## CLI-скрипты (pyproject.toml)
-
-CLI команды объявляются в `pyproject.toml` в секции `[project.scripts]` и должны указывать на `module:function`.
-
-Пример:
-
-```toml
-[project.scripts]
-tg-ws-proxy = "proxy.tg_ws_proxy:main"
-tg-ws-proxy-tray-win = "windows:main"
-tg-ws-proxy-tray-macos = "macos:main"
-tg-ws-proxy-tray-linux = "linux:main"
-```
-
 ## Настройка Telegram Desktop
 
 ### Автоматически
