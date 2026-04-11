@@ -1,15 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
+repo_root = os.path.abspath(os.path.join(os.path.dirname(SPEC), os.pardir))
 
 a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, "proxy", "tg_ws_proxy.py")],
-    pathex=[],
+    pathex=[repo_root],
     binaries=[],
     datas=[],
-    hiddenimports=[
+    hiddenimports=collect_submodules("proxy") + [
         "cryptography.hazmat.primitives.ciphers",
         "cryptography.hazmat.primitives.ciphers.algorithms",
         "cryptography.hazmat.primitives.ciphers.modes",
