@@ -39,7 +39,7 @@ jobs:
 
       - name: Build PyInstaller bootloader from source
         run: |
-          pip install "pyinstaller==6.16.0" --no-binary pyinstaller
+          pip install "pyinstaller==6.13.0" --no-binary pyinstaller
         env:
           PYINSTALLER_COMPILE_BOOTLOADER: 1
 
@@ -193,7 +193,7 @@ jobs:
 
           python3.12 -m pip install --no-deps wheelhouse/universal2/*.whl
           python3.12 -m pip install .
-          python3.12 -m pip install pyinstaller==6.16.0
+          python3.12 -m pip install pyinstaller==6.13.0
 
       - name: Create macOS icon from ICO
         run: |
@@ -295,7 +295,7 @@ jobs:
         run: |
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install .
-          .venv/bin/pip install "pyinstaller==6.16.0"
+          .venv/bin/pip install "pyinstaller==6.13.0"
 
       - name: Build binary with PyInstaller
         run: .venv/bin/pyinstaller packaging/linux.spec --noconfirm
