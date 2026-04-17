@@ -712,6 +712,7 @@ def main():
     proxy_config.pool_size = max(0, args.pool_size)
     proxy_config.fallback_cfproxy = not args.no_cfproxy
     proxy_config.fallback_cfproxy_priority = args.cfproxy_priority
+    proxy_config.cfproxy_user_domain = args.cfproxy_domain.strip()
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
 
