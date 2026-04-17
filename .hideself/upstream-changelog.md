@@ -1,14 +1,18 @@
-# Upstream Changelog (v1.6.1)
+# Upstream Changelog (v1.6.3)
 
-**Title:** TG WS Proxy v1.6.1
+**Title:** TG WS Proxy v1.6.3
 
-**Source:** https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.6.1
+**Source:** https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.6.3
 
-**Published at:** 2026-04-11T18:30:26Z
+**Published at:** 2026-04-16
 
-## Notes
+## Upstream Notes
 
-- Исправлено тестирование автоматических CF-прокси доменов
-- Увеличил количество стандартных доменов (больше доступность)
-- Fake TLS режим для CLI ([подробнее тут](https://github.com/Flowseal/tg-ws-proxy?tab=readme-ov-file#fake-tls--nginx-upstream))
+- Убраны лишние домены с `www` (Telegram не делает к ним рабочие подключения).
+- Дефолтный список доменов вынесен в `.github/cfproxy-domains.txt`, чтобы его можно было обновлять через PR.
 
+## HideSelf Adaptation
+
+- Синхронизировано с upstream тегом `v1.6.3`.
+- Формат релиза HideSelf runtime не меняется: публикуется managed Windows binary `hideself-tgws_windows.exe`.
+- При merge-конфликте для fork-owned файлов сохраняется версия HideSelf (`.github/workflows/build.yml`, `docs/README.md`).

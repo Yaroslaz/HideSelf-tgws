@@ -73,7 +73,53 @@ jobs:
         run: |
           set -euo pipefail
           git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
-          git merge --no-ff --no-edit "${{ steps.resolve.outputs.latest_tag }}"
+          if git merge --no-ff --no-edit "${{ steps.resolve.outputs.latest_tag }}"; then
+            exit 0
+          fi
+
+          echo "Merge reported conflicts, trying safe auto-resolution for known fork-owned files."
+          CONFLICT_FILES=$(git diff --name-only --diff-filter=U || true)
+          if [ -z "${CONFLICT_FILES:-}" ]; then
+            echo "Merge failed, but no conflicted files were detected."
+            exit 1
+          fi
+
+          ALLOWED_CONFLICTS=(
+            ".github/workflows/build.yml"
+            "docs/README.md"
+          )
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            IS_ALLOWED=false
+            for allowed in "${ALLOWED_CONFLICTS[@]}"; do
+              if [ "$file" = "$allowed" ]; then
+                IS_ALLOWED=true
+                break
+              fi
+            done
+            if [ "$IS_ALLOWED" != "true" ]; then
+              echo "Unexpected conflict file: $file"
+              git status --short
+              exit 1
+            fi
+          done <<< "$CONFLICT_FILES"
+
+          for file in "${ALLOWED_CONFLICTS[@]}"; do
+            if git ls-files --unmerged -- "$file" | grep -q .; then
+              echo "Keeping fork version for conflict: $file"
+              git checkout --ours -- "$file"
+              git add "$file"
+            fi
+          done
+
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo "Conflicts remain after auto-resolution."
+            git status --short
+            exit 1
+          fi
+
+          git commit --no-edit
 
       - name: Capture upstream changelog
         if: steps.resolve.outputs.update_needed == 'true'
@@ -105,13 +151,21 @@ jobs:
             --arg url "$RELEASE_URL" \
             --arg published_at "$RELEASE_PUBLISHED" \
             --arg body "$RELEASE_BODY" \
+            --arg adaptation_1 "Синхронизировано с upstream ${LATEST_TAG}." \
+            --arg adaptation_2 "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe)." \
+            --arg adaptation_3 "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах." \
             '{
               upstream: "Flowseal/tg-ws-proxy",
               tag: $tag,
               title: ($title | select(length > 0)),
               url: ($url | select(length > 0)),
               published_at: ($published_at | select(length > 0)),
-              body: $body
+              body: $body,
+              hideself_notes: [
+                $adaptation_1,
+                $adaptation_2,
+                $adaptation_3
+              ]
             }' > .hideself/upstream-changelog.json
 
           {
@@ -129,9 +183,15 @@ jobs:
               echo "**Published at:** $RELEASE_PUBLISHED"
               echo
             fi
-            echo "## Notes"
+            echo "## Upstream Notes"
             echo
             echo "$RELEASE_BODY"
+            echo
+            echo "## HideSelf Adaptation"
+            echo
+            echo "- Синхронизировано с upstream тегом \`${LATEST_TAG}\`."
+            echo "- Формат релиза HideSelf runtime не меняется: публикуется managed Windows binary \`hideself-tgws_windows.exe\`."
+            echo "- При merge-конфликте для fork-owned файлов сохраняется версия HideSelf (\`.github/workflows/build.yml\`, \`docs/README.md\`)."
             echo
           } > .hideself/upstream-changelog.md
 
