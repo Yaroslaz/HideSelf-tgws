@@ -1,13 +1,13 @@
 {
   "upstream": "Flowseal/tg-ws-proxy",
-  "tag": "v1.6.3",
-  "title": "TG WS Proxy v1.6.3",
-  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.6.3",
-  "published_at": "2026-04-16",
-  "body": "- Убраны лишние домены с `www` (Telegram не делает к ним рабочие подключения).\r\n- Дефолтный список доменов вынесен в `.github/cfproxy-domains.txt`, чтобы его можно было обновлять через PR.\r",
+  "tag": "v1.6.4",
+  "title": "TG WS Proxy v1.6.4",
+  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.6.4",
+  "published_at": "2026-04-18T16:02:29Z",
+  "body": "- Исправлена ошибка, из-за которой пользовательский домен CF-прокси не учитывался при использовании прокси напрямую (не через гуи)\r\n- Улучшено логирование\r\n## \r\n### [❤️ Поддержать развитие проекта](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md)\r",
   "hideself_notes": [
-    "Синхронизировано с upstream v1.6.3.",
-    "Формат релиза HideSelf runtime сохранен: managed Windows binary hideself-tgws_windows.exe.",
-    "Кастомные файлы форка (build workflow и docs/README) сохраняются при merge-конфликтах."
+    "Синхронизировано с upstream v1.6.4.",
+    "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
+    "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
   ]
 }
