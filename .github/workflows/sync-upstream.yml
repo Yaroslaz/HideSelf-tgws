@@ -73,53 +73,88 @@ jobs:
         run: |
           set -euo pipefail
           git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
-          if git merge --no-ff --no-edit "${{ steps.resolve.outputs.latest_tag }}"; then
-            exit 0
-          fi
 
-          echo "Merge reported conflicts, trying safe auto-resolution for known fork-owned files."
-          CONFLICT_FILES=$(git diff --name-only --diff-filter=U || true)
-          if [ -z "${CONFLICT_FILES:-}" ]; then
-            echo "Merge failed, but no conflicted files were detected."
-            exit 1
-          fi
+          set +e
+          git merge --no-ff --no-commit "${{ steps.resolve.outputs.latest_tag }}"
+          MERGE_STATUS=$?
+          set -e
 
-          ALLOWED_CONFLICTS=(
-            ".github/workflows/build.yml"
-            "docs/README.md"
-          )
-
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-            IS_ALLOWED=false
-            for allowed in "${ALLOWED_CONFLICTS[@]}"; do
-              if [ "$file" = "$allowed" ]; then
-                IS_ALLOWED=true
-                break
-              fi
-            done
-            if [ "$IS_ALLOWED" != "true" ]; then
-              echo "Unexpected conflict file: $file"
-              git status --short
+          if [ "$MERGE_STATUS" -ne 0 ]; then
+            echo "Merge reported conflicts, trying safe auto-resolution for known fork-owned files."
+            CONFLICT_FILES=$(git diff --name-only --diff-filter=U || true)
+            if [ -z "${CONFLICT_FILES:-}" ]; then
+              echo "Merge failed, but no conflicted files were detected."
               exit 1
             fi
-          done <<< "$CONFLICT_FILES"
 
-          for file in "${ALLOWED_CONFLICTS[@]}"; do
-            if git ls-files --unmerged -- "$file" | grep -q .; then
+            ALLOWED_CONFLICTS=(
+              "docs/README.md"
+              "proxy/tg_ws_proxy.py"
+            )
+
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+              IS_ALLOWED=false
+              for allowed in "${ALLOWED_CONFLICTS[@]}"; do
+                if [ "$file" = "$allowed" ]; then
+                  IS_ALLOWED=true
+                  break
+                fi
+              done
+              if [[ "$file" == .github/workflows/* ]]; then
+                IS_ALLOWED=true
+              fi
+              if [ "$IS_ALLOWED" != "true" ]; then
+                echo "Unexpected conflict file: $file"
+                git status --short
+                exit 1
+              fi
+            done <<< "$CONFLICT_FILES"
+
+            while IFS= read -r file; do
+              [ -z "$file" ] && continue
+              if [[ "$file" == .github/workflows/* ]]; then
+                echo "Dropping upstream workflow conflict to avoid GitHub App workflow-scope push rejection: $file"
+                if git show "HEAD:$file" >/dev/null 2>&1; then
+                  git checkout --ours -- "$file"
+                  git add "$file"
+                else
+                  git rm -f --ignore-unmatch "$file"
+                fi
+                continue
+              fi
+
+              if [ "$file" = "proxy/tg_ws_proxy.py" ]; then
+                echo "Taking upstream TG WS runtime implementation for conflict: $file"
+                git checkout --theirs -- "$file"
+                git add "$file"
+                continue
+              fi
+
               echo "Keeping fork version for conflict: $file"
               git checkout --ours -- "$file"
               git add "$file"
-            fi
-          done
+            done <<< "$CONFLICT_FILES"
 
-          if git diff --name-only --diff-filter=U | grep -q .; then
-            echo "Conflicts remain after auto-resolution."
-            git status --short
-            exit 1
+            if git diff --name-only --diff-filter=U | grep -q .; then
+              echo "Conflicts remain after auto-resolution."
+              git status --short
+              exit 1
+            fi
           fi
 
-          git commit --no-edit
+          if git status --short -- .github/workflows | grep -q .; then
+            echo "Dropping upstream workflow file changes; GITHUB_TOKEN cannot push workflow files without workflow permission."
+            git restore --source=HEAD --staged --worktree -- .github/workflows || true
+            git clean -f -- .github/workflows
+          fi
+
+          if git diff --cached --quiet; then
+            echo "No merge changes to commit after filtering upstream workflow files."
+            exit 0
+          fi
+
+          git commit -m "Merge tag '${{ steps.resolve.outputs.latest_tag }}'"
 
       - name: Capture upstream changelog
         if: steps.resolve.outputs.update_needed == 'true'
