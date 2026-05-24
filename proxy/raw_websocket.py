@@ -25,7 +25,7 @@ _ssl_ctx.verify_mode = ssl.CERT_NONE
 
 class WsHandshakeError(Exception):
     def __init__(self, status_code: int, status_line: str,
-                 headers: dict = None, location: str = None):
+                 headers: Optional[dict] = None, location: Optional[str] = None):
         self.status_code = status_code
         self.status_line = status_line
         self.headers = headers or {}
@@ -78,7 +78,8 @@ class RawWebSocket:
         self._closed = False
 
     @staticmethod
-    async def connect(host: str, domain: str, timeout: float = 10.0) -> 'RawWebSocket':
+    async def connect(host: str, domain: str, timeout: float = 10.0,
+                      path: str = '/apiws') -> 'RawWebSocket':
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, 443, ssl=_ssl_ctx,
                                     server_hostname=domain),
@@ -89,16 +90,13 @@ class RawWebSocket:
         ws_key = base64.b64encode(os.urandom(16)).decode()
 
         req = (
-            f'GET /apiws HTTP/1.1\r\n'
+            f'GET {path} HTTP/1.1\r\n'
             f'Host: {domain}\r\n'
             f'Upgrade: websocket\r\n'
             f'Connection: Upgrade\r\n'
             f'Sec-WebSocket-Key: {ws_key}\r\n'
             f'Sec-WebSocket-Version: 13\r\n'
             f'Sec-WebSocket-Protocol: binary\r\n'
-            f'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            f'AppleWebKit/537.36 (KHTML, like Gecko) '
-            f'Chrome/131.0.0.0 Safari/537.36\r\n'
             f'\r\n'
         )
         writer.write(req.encode())
