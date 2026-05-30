@@ -1,14 +1,13 @@
 {
   "upstream": "Flowseal/tg-ws-proxy",
-  "tag": "v1.7.0",
-  "title": "TG WS Proxy v1.7.0",
-  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.7.0",
-  "published_at": "2026-05-16T08:36:48Z",
-  "body": "- Добавлен новый режим **Cloudflare Worker** - бесплатный способ проксирования\n  * https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/CfWorker.md\n  * Это альтернатива CF-прокси, но для Worker'а не нужно покупать домен.\n- Убран `--cfproxy-priority`. Теперь приоритет всегда такой: `CF-прокси (если включён)` -> `CF-worker (если указан домен)` -> `Direct`",
+  "tag": "v1.7.1",
+  "title": "TG WS Proxy v1.7.1",
+  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.7.1",
+  "published_at": "2026-05-30T17:39:15Z",
+  "body": "* Добавлена возможность указания нескольких пользовательских доменов Cloudflare Proxy и Cloudflare Worker\r\n  * В GUI домены указываются через запятую\r\n  * В консоли домены указываются через повтор аргументов `--cfproxy-domain` и `--cfproxy-worker-domain`\r\n* Добавлен Pool для Cloudflare Worker\r\n* Оптимизация: нарезка MTProto-пакетов за O(N) вместо O(N²) by @f4rceful in https://github.com/Flowseal/tg-ws-proxy/pull/913\r\n* Системный libcrypto как fallback, если cryptography недоступен by @k1zn in https://github.com/Flowseal/tg-ws-proxy/pull/894\r\n\r\n## \r\n### [❤️ Поддержать развитие проекта](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md)\r\n\r\n> [!TIP]\r\n> Не можете скачать?\r\n> Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/",
   "hideself_notes": [
-    "Синхронизировано с upstream v1.7.0.",
-    "Формат релиза HideSelf runtime сохранен: managed Windows binary hideself-tgws_windows.exe.",
-    "Upstream workflow-файлы не импортируются в merge-коммит, чтобы GITHUB_TOKEN без workflows permission мог push-ить результат синхронизации.",
-    "При конфликте в proxy/tg_ws_proxy.py берётся upstream-реализация, чтобы новые CLI-флаги TG WS попадали в runtime."
+    "Синхронизировано с upstream v1.7.1.",
+    "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
+    "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
   ]
 }
