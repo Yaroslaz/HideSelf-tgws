@@ -24,7 +24,7 @@ try:
 except ImportError:
     pyperclip = None
 
-from proxy import __version__, get_link_host, parse_dc_ip_list, proxy_config
+from proxy import __version__, get_link_host, parse_dc_ip_list, proxy_config, coerce_domain_list
 from proxy.tg_ws_proxy import _run
 
 from utils.tray_common import (
@@ -115,7 +115,7 @@ def _ask_cfworker_domain(default: str) -> Optional[str]:
     value = default
     while True:
         script = (
-            f'set d to display dialog "{_esc("Cloudflare Worker домен (например, name.account.workers.dev):")}" '
+            f'set d to display dialog "{_esc("Cloudflare Worker домены через запятую (например, name.account.workers.dev):")}" '
             f'default answer "{_esc(value)}" '
             f'with title "TG WS Proxy" '
             f'buttons {{"Закрыть", "?", "OK"}} '
@@ -425,19 +425,24 @@ def _edit_config_dialog() -> None:
         return
 
     cfproxy_domain = _osascript_input(
-        "Свой CF-домен (оставьте пустым для автоматического выбора):\n"
+        "Свои CF-домены через запятую (оставьте пустым для автоматического выбора):\n"
         "DNS записи kws1-kws5,kws203 должны указывать на IP датацентров Telegram через Cloudflare.",
-        cfg.get("cfproxy_user_domain", DEFAULT_CONFIG.get("cfproxy_user_domain", "")),
+        ", ".join(coerce_domain_list(
+            cfg.get("cfproxy_user_domain", DEFAULT_CONFIG.get("cfproxy_user_domain", []))
+        )),
     )
     if cfproxy_domain is None:
         return
-    cfproxy_domain = cfproxy_domain.strip()
+    cfproxy_domains = coerce_domain_list(cfproxy_domain)
 
     cfworker_domain = _ask_cfworker_domain(
-        cfg.get("cfproxy_worker_domain", DEFAULT_CONFIG.get("cfproxy_worker_domain", ""))
+        ", ".join(coerce_domain_list(
+            cfg.get("cfproxy_worker_domain", DEFAULT_CONFIG.get("cfproxy_worker_domain", []))
+        ))
     )
     if cfworker_domain is None:
         return
+    cfworker_domains = coerce_domain_list(cfworker_domain)
 
     new_cfg = {
         "host": host,
@@ -450,8 +455,8 @@ def _edit_config_dialog() -> None:
         "log_max_mb": adv.get("log_max_mb", cfg.get("log_max_mb", DEFAULT_CONFIG["log_max_mb"])),
         "check_updates": cfg.get("check_updates", True),
         "cfproxy": cfproxy,
-        "cfproxy_user_domain": cfproxy_domain,
-        "cfproxy_worker_domain": cfworker_domain,
+        "cfproxy_user_domain": cfproxy_domains,
+        "cfproxy_worker_domain": cfworker_domains,
     }
     save_config(new_cfg)
     log.info("Config saved: %s", new_cfg)

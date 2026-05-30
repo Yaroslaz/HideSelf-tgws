@@ -13,6 +13,7 @@ cloudflare.dev
 workers.dev
 ```
 2. Создайте аккаунт в [Cloudflare](https://dash.cloudflare.com/) (или войдите в существующий)
+	* **После создания аккаунта подтвердите почту с помощью письма, который вам пришел на email**
 3. Слева в панели выберите `Compute` → `Workers & Pages`  
    <img width="250" height="768" alt="image" src="https://github.com/user-attachments/assets/d81e3522-045a-4e65-9c2e-5545b7ad409a" />
 

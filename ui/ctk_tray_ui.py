@@ -6,7 +6,7 @@ import webbrowser
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from proxy import __version__, get_link_host, parse_dc_ip_list
+from proxy import __version__, get_link_host, parse_dc_ip_list, coerce_domain_list
 from proxy.balancer import balancer
 from utils.update_check import RELEASES_PAGE_URL, get_status
 
@@ -59,15 +59,17 @@ _TIP_CFPROXY = (
     "Использовать Cloudflare прокси для недоступных датацентров"
 )
 _TIP_CFPROXY_DOMAIN = (
-    "Ваш собственный домен, проксируемый через Cloudflare, для WS-подключения.\n"
-    "Если не указан — выбирается автоматически из поддерживаемых доменов"
+    "Ваши собственные домены, проксируемые через Cloudflare, для WS-подключения.\n"
+    "Несколько доменов указывайте через запятую.\n"
+    "Если не указаны — выбираются автоматически из поддерживаемых доменов"
 )
 _TIP_CFPROXY_USER_DOMAIN_CB = (
-    "Указать свой домен вместо автоматического выбора"
+    "Указать свои домены вместо автоматического выбора"
 )
 _TIP_CFWORKER_DOMAIN = (
-    "Домен Cloudflare Worker (например, name.account.workers.dev).\n"
-    "Прокси передает через него подключение к Telegram DC по IP"
+    "Домены Cloudflare Worker (например, name.account.workers.dev).\n"
+    "Несколько доменов указывайте через запятую.\n"
+    "Прокси передает через них подключение к Telegram DC по IP"
 )
 _TIP_SAVE = "Сохранить настройки"
 _TIP_CANCEL = "Закрыть окно без сохранения изменений"
@@ -149,6 +151,14 @@ def _run_cfworker_connectivity_test(domain: str) -> dict:
     return _run_connectivity_test(cases)
 
 
+def _run_cfproxy_multi_test(domains: list) -> dict:
+    return {domain: _run_cfproxy_connectivity_test(domain) for domain in domains}
+
+
+def _run_cfworker_multi_test(domains: list) -> dict:
+    return {domain: _run_cfworker_connectivity_test(domain) for domain in domains}
+
+
 def _run_cfproxy_auto_test(domains: list) -> tuple:
     merged: dict = {}
     best_domain = None
@@ -197,6 +207,52 @@ def _show_connectivity_results(title_base: str, results: dict,
                 f"\u2717 Недоступны:\n"
                 + "\n".join(f"  {label_prefix}{dc}: {v}" for dc, v in fail)
             )
+
+    root = _tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+    _mb.showinfo(title, msg, parent=root)
+    root.destroy()
+
+
+def _show_multi_connectivity_results(title_base: str, per_domain: dict,
+                                     label_prefix: str = 'DC') -> None:
+    import tkinter as _tk
+    from tkinter import messagebox as _mb
+
+    total = len(_CFPROXY_TEST_DCS)
+    all_ok = True
+    any_ok = False
+    blocks = []
+    for domain, results in per_domain.items():
+        ok = [dc for dc, v in results.items() if v is True]
+        fail = [(dc, v) for dc, v in results.items() if v is not True]
+        if len(ok) == total:
+            any_ok = True
+            blocks.append(f"\u2713 {domain}: все {total} серверов доступны")
+        elif not ok:
+            all_ok = False
+            blocks.append(f"\u2717 {domain}: недоступен")
+        else:
+            all_ok = False
+            any_ok = True
+            blocks.append(
+                f"~ {domain}: работают "
+                f"{', '.join(f'{label_prefix}{dc}' for dc in ok)}; "
+                f"недоступны "
+                f"{', '.join(f'{label_prefix}{dc}' for dc, _ in fail)}"
+            )
+
+    if all_ok:
+        title = f"{title_base}: всё работает"
+    elif any_ok:
+        title = f"{title_base}: частично работает"
+    else:
+        title = f"{title_base}: недоступен"
+    msg = "\n\n".join(blocks)
 
     root = _tk.Tk()
     root.withdraw()
@@ -450,20 +506,23 @@ def install_tray_config_form(
     _cf_test_btn = [None]
 
     def _on_cf_test():
-        user_domain = cfproxy_user_domain_var.get().strip() if cf_custom_cb_var.get() else ""
+        user_domains = (
+            coerce_domain_list(cfproxy_user_domain_var.get())
+            if cf_custom_cb_var.get() else []
+        )
         btn = _cf_test_btn[0]
         if btn:
             btn.configure(text="...", state="disabled")
         import threading as _threading
-        if user_domain:
+        if user_domains:
             def _worker():
                 try:
-                    res = _run_cfproxy_connectivity_test(user_domain)
+                    per = _run_cfproxy_multi_test(user_domains)
                     if btn:
                         btn.after(
                             0,
-                            lambda: _show_connectivity_results(
-                                "CF-прокси", res, domain=user_domain, label_prefix='kws',
+                            lambda: _show_multi_connectivity_results(
+                                "CF-прокси", per, label_prefix='kws',
                             ),
                         )
                 except Exception as exc:
@@ -508,8 +567,10 @@ def install_tray_config_form(
     cf_custom_row = ctk.CTkFrame(cf_inner, fg_color="transparent")
     cf_custom_row.pack(fill="x")
 
-    saved_user_domain = cfg.get("cfproxy_user_domain", default_config.get("cfproxy_user_domain", ""))
-    cf_custom_cb_var = ctk.BooleanVar(value=bool(saved_user_domain))
+    saved_user_domains = coerce_domain_list(
+        cfg.get("cfproxy_user_domain", default_config.get("cfproxy_user_domain", ""))
+    )
+    cf_custom_cb_var = ctk.BooleanVar(value=bool(saved_user_domains))
     cf_custom_cb = _checkbox(ctk, cf_custom_row, theme, "Свой домен", cf_custom_cb_var)
     cf_custom_cb.pack(side="left", padx=(0, 10))
     attach_ctk_tooltip(cf_custom_cb, _TIP_CFPROXY_USER_DOMAIN_CB)
@@ -522,7 +583,7 @@ def install_tray_config_form(
         command=lambda: webbrowser.open(_CFPROXY_HELP_URL),
     ).pack(side="right")
 
-    cfproxy_user_domain_var = ctk.StringVar(value=saved_user_domain)
+    cfproxy_user_domain_var = ctk.StringVar(value=", ".join(saved_user_domains))
     cf_domain_entry = _entry(
         ctk, cf_custom_row, theme, var=cfproxy_user_domain_var,
         height=32, radius=8,
@@ -543,14 +604,16 @@ def install_tray_config_form(
 
     cf_worker_row = ctk.CTkFrame(cf_worker_inner, fg_color="transparent")
     cf_worker_row.pack(fill="x", pady=(0, 4))
-    cf_worker_lbl = _label(ctk, cf_worker_row, theme, "Cloudflare Worker домен", size=11)
+    cf_worker_lbl = _label(ctk, cf_worker_row, theme, "Cloudflare Worker домены (через запятую)", size=11)
     cf_worker_lbl.pack(anchor="w", pady=(0, 2))
 
     cf_worker_input = ctk.CTkFrame(cf_worker_inner, fg_color="transparent")
     cf_worker_input.pack(fill="x")
 
     cfproxy_worker_domain_var = ctk.StringVar(
-        value=cfg.get("cfproxy_worker_domain", default_config.get("cfproxy_worker_domain", ""))
+        value=", ".join(coerce_domain_list(
+            cfg.get("cfproxy_worker_domain", default_config.get("cfproxy_worker_domain", ""))
+        ))
     )
     cf_worker_entry = _entry(
         ctk, cf_worker_input, theme, var=cfproxy_worker_domain_var,
@@ -565,24 +628,24 @@ def install_tray_config_form(
         btn = _cfworker_test_btn[0]
         if btn is None:
             return
-        enabled = bool(cfproxy_worker_domain_var.get().strip())
+        enabled = bool(coerce_domain_list(cfproxy_worker_domain_var.get()))
         btn.configure(state="normal" if enabled else "disabled")
 
     def _on_cfworker_test():
-        domain = cfproxy_worker_domain_var.get().strip()
+        domains = coerce_domain_list(cfproxy_worker_domain_var.get())
         btn = _cfworker_test_btn[0]
-        if not domain or btn is None:
+        if not domains or btn is None:
             return
         btn.configure(text="...", state="disabled")
         import threading as _threading
 
         def _worker():
             try:
-                res = _run_cfworker_connectivity_test(domain)
+                per = _run_cfworker_multi_test(domains)
                 btn.after(
                     0,
-                    lambda: _show_connectivity_results(
-                        "CF Worker", res, domain=domain, label_prefix='DC',
+                    lambda: _show_multi_connectivity_results(
+                        "CF Worker", per, label_prefix='DC',
                     ),
                 )
             except Exception as exc:
@@ -784,9 +847,9 @@ def validate_config_form(
     if widgets.cfproxy_var is not None:
         new_cfg["cfproxy"] = bool(widgets.cfproxy_var.get())
     if widgets.cfproxy_user_domain_var is not None:
-        new_cfg["cfproxy_user_domain"] = widgets.cfproxy_user_domain_var.get().strip()
+        new_cfg["cfproxy_user_domain"] = coerce_domain_list(widgets.cfproxy_user_domain_var.get())
     if widgets.cfproxy_worker_domain_var is not None:
-        new_cfg["cfproxy_worker_domain"] = widgets.cfproxy_worker_domain_var.get().strip()
+        new_cfg["cfproxy_worker_domain"] = coerce_domain_list(widgets.cfproxy_worker_domain_var.get())
     if widgets.appearance_var is not None:
         new_cfg["appearance"] = _APPEARANCE_TO_CFG.get(widgets.appearance_var.get(), "auto")
     return new_cfg
