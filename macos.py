@@ -185,7 +185,7 @@ def _run_proxy_thread() -> None:
         loop.run_until_complete(_run(stop_event=stop_ev))
     except Exception as exc:
         log.error("Proxy thread crashed: %s", exc)
-        msg = diagnose_listen_error(exc)
+        msg, _ = diagnose_listen_error(exc)
         if msg:
             _show_error(msg)
     finally:

@@ -228,7 +228,7 @@ _proxy_thread: Optional[threading.Thread] = None
 _async_stop: Optional[Tuple[asyncio.AbstractEventLoop, asyncio.Event]] = None
 
 
-def _run_proxy_thread(on_port_busy: Callable[[str], None]) -> None:
+def _run_proxy_thread(show_error: Callable[[str], None]) -> None:
     global _async_stop
 
     loop = asyncio.new_event_loop()
@@ -240,9 +240,11 @@ def _run_proxy_thread(on_port_busy: Callable[[str], None]) -> None:
         loop.run_until_complete(_run(stop_event=stop_ev))
     except Exception as exc:
         log.error("Proxy thread crashed: %s", repr(exc))
-        msg = diagnose_listen_error(exc)
+        msg, diagnose_called = diagnose_listen_error(exc)
         if msg:
-            on_port_busy(msg)
+            show_error(msg)
+        if diagnose_called:
+            diagnose_called()
     finally:
         loop.close()
         _async_stop = None

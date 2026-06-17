@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import errno
+import webbrowser
 
-from typing import Optional
+from typing import Optional, Tuple, Callable
 
 
 MSG_PORT_BUSY = (
@@ -23,6 +24,7 @@ MSG_PERMISSION = (
 MSG_BAD_ADDRESS = (
     "Не удалось запустить прокси:\n"
     "Некорректный или недоступный адрес для прослушивания.\n\n"
+    "Проверьте решение по открывшейся в браузере ссылке.\n"
     "Проверьте host и порт в настройках прокси и перезапустите."
 )
 
@@ -33,7 +35,7 @@ _WSA_EADDRINUSE = 10048
 _WSA_EADDRNOTAVAIL = 10049
 
 
-def diagnose_listen_error(exc: BaseException) -> Optional[str]:
+def diagnose_listen_error(exc: BaseException) -> Tuple[Optional[str], Optional[Callable]]:
     """Map a listen-socket bind failure to a user-facing message.
 
     Returns None when the exception is not a recognizable bind failure,
@@ -46,10 +48,10 @@ def diagnose_listen_error(exc: BaseException) -> Optional[str]:
     winerror = getattr(exc, "winerror", None)
 
     if err == errno.EADDRINUSE or winerror == _WSA_EADDRINUSE:
-        return MSG_PORT_BUSY
+        return MSG_PORT_BUSY, None
     if err == errno.EACCES or winerror == _WSA_EACCES:
-        return MSG_PERMISSION
+        return MSG_PERMISSION, None
     if (winerror in (_WSA_EFAULT, _WSA_EADDRNOTAVAIL)
             or err in (errno.EADDRNOTAVAIL, errno.EFAULT)):
-        return MSG_BAD_ADDRESS
-    return None
+        return MSG_BAD_ADDRESS, lambda : webbrowser.open("https://github.com/Flowseal/tg-ws-proxy/issues/903#issuecomment-4726752103")
+    return None, None
