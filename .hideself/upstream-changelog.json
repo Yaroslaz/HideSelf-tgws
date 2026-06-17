@@ -1,12 +1,12 @@
 {
   "upstream": "Flowseal/tg-ws-proxy",
-  "tag": "v1.7.2",
-  "title": "TG WS Proxy v1.7.2",
-  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.7.2",
-  "published_at": "2026-06-03T14:17:50Z",
-  "body": "- Увеличена доступность стандартных CF-прокси в 2 раза (спасибо за поддержку)\r\n- Добавлена рандомизация CF-worker доменов\r\n\r\n## \r\n### [❤️ Поддержать развитие проекта](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md)\r\n\r\n> [!TIP]\r\n> Не можете скачать?\r\n> Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/\r",
+  "tag": "v1.7.3",
+  "title": "TG WS Proxy v1.7.3",
+  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.7.3",
+  "published_at": "2026-06-17T08:15:57Z",
+  "body": "## What's Changed\r\n* Добавлен портативный режим\r\n  * Автоматически активируется, если рядом с исполняемым файлом есть папка с названием `TgWsProxy_data`\r\n  * Либо запуском исполняемого файла с флагом `--portable`\r\n* Добавлена сборка Windows ARM64 в Build & Release workflow by @Yan4ik000 in https://github.com/Flowseal/tg-ws-proxy/pull/943\r\n* Фикс ротации логов (#885) by @f4rceful in https://github.com/Flowseal/tg-ws-proxy/pull/932\r\n* Добавлено уведомление на часто возникающие ошибки вместо системного текста by @f4rceful in https://github.com/Flowseal/tg-ws-proxy/pull/924\r\n* WS keepalive-пинги против обрыва простаивающих сессий (#646) by @f4rceful in https://github.com/Flowseal/tg-ws-proxy/pull/925\r\n* Добавлена переменная для использования Cloudflare Worker в докер контейнере by @partoftheworlD in https://github.com/Flowseal/tg-ws-proxy/pull/996\r\n\r\n## New Contributors\r\n* @keeniGithub made their first contribution in https://github.com/Flowseal/tg-ws-proxy/pull/958\r\n* @partoftheworlD made their first contribution in https://github.com/Flowseal/tg-ws-proxy/pull/996\r\n* @Yan4ik000 made their first contribution in https://github.com/Flowseal/tg-ws-proxy/pull/943\r\n\r\n## \r\n### [❤️ Поддержать развитие проекта](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md)\r\n\r\n> [!TIP]\r\n> Не можете скачать?\r\n> Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/",
   "hideself_notes": [
-    "Синхронизировано с upstream v1.7.2.",
+    "Синхронизировано с upstream v1.7.3.",
     "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
     "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
   ]
