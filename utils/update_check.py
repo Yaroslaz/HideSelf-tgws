@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from itertools import zip_longest
@@ -37,13 +36,8 @@ _state: Dict[str, Any] = {
 
 def _cache_file() -> Optional[Path]:
     try:
-        if sys.platform == "win32":
-            root = Path(os.environ.get("APPDATA", str(Path.home()))) / "TgWsProxy"
-        elif sys.platform == "darwin":
-            root = Path.home() / "Library/Application Support/TgWsProxy"
-        else:
-            xdg = os.environ.get("XDG_CONFIG_HOME")
-            root = (Path(xdg).expanduser() if xdg else Path.home() / ".config") / "TgWsProxy"
+        from utils.tray_common import APP_DIR
+        root = APP_DIR
         root.mkdir(parents=True, exist_ok=True)
         return root / ".update_check_cache.json"
     except OSError:

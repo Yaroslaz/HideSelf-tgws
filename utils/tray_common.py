@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import logging.handlers
 import os
+import shutil
 import socket as _socket
 import sys
 import threading
@@ -23,14 +23,70 @@ from utils.logging_setup import build_log_handler
 log = logging.getLogger("tg-ws-tray")
 
 APP_NAME = "TgWsProxy"
+PORTABLE_DIR_NAME = "TgWsProxy_data"
 
 
-def _app_dir() -> Path:
+def _standard_app_dir() -> Path:
     if sys.platform == "win32":
         return Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / APP_NAME
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP_NAME
+
+
+def _exe_dir() -> Optional[Path]:
+    try:
+        base = getattr(sys, "frozen", False) and sys.executable or sys.argv[0]
+    except Exception:
+        return None
+    if not base:
+        return None
+    p = Path(base).resolve()
+    return p.parent if p.is_file() else p
+
+
+def _detect_portable() -> Optional[Path]:
+    exe_dir = _exe_dir()
+    if exe_dir is None:
+        return None
+    portable_dir = exe_dir / PORTABLE_DIR_NAME
+    if "--portable" in sys.argv:
+        try:
+            portable_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.warning("Cannot create portable dir %s: %s", portable_dir, repr(exc))
+            return None
+    if portable_dir.is_dir():
+        _migrate_into_portable(portable_dir)
+        return portable_dir
+    return None
+
+
+def _migrate_into_portable(portable_dir: Path) -> None:
+    try:
+        if any(portable_dir.iterdir()):
+            return
+    except OSError:
+        return
+    std = _standard_app_dir()
+    if not std.exists():
+        return
+    try:
+        for src in std.iterdir():
+            if ".log" in src.name:
+                continue
+            dst = portable_dir / src.name
+            try:
+                if not src.is_dir():
+                    shutil.copy2(src, dst)
+            except OSError as exc:
+                log.warning("Portable migration: skip %s: %s", src.name, repr(exc))
+    except OSError as exc:
+        log.warning("Portable migration failed: %s", repr(exc))
+
+
+def _app_dir() -> Path:
+    return _detect_portable() or _standard_app_dir()
 
 
 APP_DIR = _app_dir()
