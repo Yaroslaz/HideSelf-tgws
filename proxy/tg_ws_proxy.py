@@ -336,6 +336,7 @@ async def _handle_client(reader, writer, secret: bytes):
                      label, dc, media_tag, target)
         elif fronting_active:
             # TODO: Move fronting logic into bridge.py where other fallbacks are handled
+            # Make less timeout, and don't try it next time for X seconds if it has failed as well
             log.info("[%s] DC%d%s -> fronting / Host %s",
                      label, dc, media_tag, domains[0])
             try:
