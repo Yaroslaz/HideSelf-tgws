@@ -434,15 +434,6 @@ def install_tray_config_form(
     language_combo.pack(fill="x")
     _sync_language_combobox(language_combo, language_var, lang_cfg)
 
-    def _on_language_change(choice: str) -> None:
-        lang = language_from_label(choice)
-        set_language(lang)
-        _sync_language_combobox(language_combo, language_var, lang)
-        if on_language_change is not None:
-            on_language_change()
-
-    language_combo.configure(command=_on_language_change)
-
     _label(ctk, theme_col, theme, t("settings.theme"), size=11).pack(
         anchor="w", pady=(0, 2)
     )
