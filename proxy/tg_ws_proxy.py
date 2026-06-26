@@ -36,7 +36,7 @@ log = logging.getLogger('tg-mtproto-proxy')
 DC_FAIL_COOLDOWN = 30.0
 WS_FAIL_TIMEOUT = 2.0
 LISTENER_CHECK_INTERVAL = 5.0
-LISTENER_RESTART_DELAY = 0.5
+LISTENER_RESTART_DELAY = 1.0
 ws_blacklist: Set[str] = set()
 dc_fail_until: Dict[str, float] = {}
 
@@ -557,8 +557,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             await _quiet_cancel(watchdog_task)
             await _quiet_cancel(serve_task)
             log.warning(
-                "Listening socket died (OS accept error, e.g. WinError 64); "
-                "restarting server")
+                "Listening socket died, restarting server")
             server.close()
             try:
                 await server.wait_closed()
