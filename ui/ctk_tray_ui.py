@@ -311,6 +311,10 @@ def tray_settings_scroll_and_footer(
         scrollbar_button_hover_color=theme.text_secondary,
     )
     scroll.pack(fill="both", expand=True)
+    try:
+        scroll._parent_canvas.configure(yscrollincrement=4)
+    except Exception:
+        pass
     return scroll, footer
 
 
