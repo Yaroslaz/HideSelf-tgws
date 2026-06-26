@@ -82,10 +82,14 @@ class RawWebSocket:
 
     @staticmethod
     async def connect(host: str, domain: str, timeout: float = 10.0,
-                      path: str = '/apiws') -> 'RawWebSocket':
+                      path: str = '/apiws', *,
+                      sni: Optional[str] = None) -> 'RawWebSocket':
+        if sni is None:
+            sni = domain
+
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, 443, ssl=_ssl_ctx,
-                                    server_hostname=domain),
+                                    server_hostname=sni),
             timeout=min(timeout, 10))
         
         set_sock_opts(writer.transport, proxy_config.buffer_size)
@@ -102,6 +106,7 @@ class RawWebSocket:
             f'Sec-WebSocket-Protocol: binary\r\n'
             f'\r\n'
         )
+
         writer.write(req.encode())
         await writer.drain()
 
