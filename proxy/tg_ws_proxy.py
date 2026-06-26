@@ -335,6 +335,7 @@ async def _handle_client(reader, writer, secret: bytes):
             log.info("[%s] DC%d%s -> pool hit via %s",
                      label, dc, media_tag, target)
         elif fronting_active:
+            # TODO: Move fronting logic into bridge.py where other fallbacks are handled
             log.info("[%s] DC%d%s -> fronting / Host %s",
                      label, dc, media_tag, domains[0])
             try:
@@ -387,6 +388,8 @@ async def _handle_client(reader, writer, secret: bytes):
                                 label, dc, media_tag, repr(exc))
 
         # Fronting fallback if WS timed out
+        # TODO: Move fronting logic into bridge.py where other fallbacks are handled
+        # and don't forget about WsPool fronting fallback
         if ws is None and ws_timed_out and not fronting_active:
             log.info("[%s] DC%d%s -> fronting fallback (Host %s)",
                      label, dc, media_tag, domains[0])
@@ -415,6 +418,8 @@ async def _handle_client(reader, writer, secret: bytes):
                 dc_fail_until[dc_key] = now + DC_FAIL_COOLDOWN
             else:
                 dc_fail_until[dc_key] = now + DC_FAIL_COOLDOWN
+                # TODO: may be don't try regular WS connection and do fallback instanstly
+                # instead of waiting for WS_FAIL_TIMEOUT and then fallback
                 log.info("[%s] DC%d%s WS cooldown for %ds",
                          label, dc, media_tag, int(DC_FAIL_COOLDOWN))
 
