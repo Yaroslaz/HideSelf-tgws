@@ -1,37 +1,26 @@
-# Upstream Changelog (v1.8.0)
+# Upstream Changelog (v1.8.1)
 
-**Title:** TG WS Proxy v1.8.0
+**Title:** TG WS Proxy v1.8.1
 
-**Source:** https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.8.0
+**Source:** https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.8.1
 
-**Published at:** 2026-06-26T16:22:34Z
+**Published at:** 2026-06-26T22:34:35Z
 
 ## Upstream Notes
 
-## What's Changed
-* Локализация (ru/en) by @rozkomnadzor in https://github.com/Flowseal/tg-ws-proxy/pull/1025
-* Добавлен Fronting fallback (стандартное соединение с другим SNI как возможное решение участившихся проблем)
-  * Если Вы наблюдаете в логах постоянные **`fronting failed: TimeoutError`** и **`WS connect timed out`**, то сотрите в настройках всё из поля `DC->IP`
-* Увеличена доступность стандартных CF-прокси
-* Откат WS keepalive (по репортам вызывал больше проблем) in https://github.com/Flowseal/tg-ws-proxy/pull/1036
-* Исправлена иконка на MacOS by @IMDelewer in https://github.com/Flowseal/tg-ws-proxy/pull/1019
+* Исправлены переподключения, если указанный ip из `DC->IP` недоступен in https://github.com/Flowseal/tg-ws-proxy/commit/9ff95d12223ed1b093fe84f046797821b34aa5cf
+  * Первое подключение может занять в этом случае до 15 секунд, дальше будет обычная скорость подключения 
 
-## New Contributors
-* @rozkomnadzor made their first contribution in https://github.com/Flowseal/tg-ws-proxy/pull/1025
-
----
+--- 
 ### [❤️ Поддержать развитие проекта](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md)
-
 
 > [!TIP]
 > Не можете скачать?
 > Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/
 
-
-
 ## HideSelf Adaptation
 
-- Синхронизировано с upstream тегом `v1.8.0`.
+- Синхронизировано с upstream тегом `v1.8.1`.
 - Формат релиза HideSelf runtime не меняется: публикуется managed Windows binary `hideself-tgws_windows.exe`.
 - При merge-конфликте для fork-owned файлов сохраняется версия HideSelf (`.github/workflows/build.yml`, `docs/README.md`).
 

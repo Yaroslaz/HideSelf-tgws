@@ -1,12 +1,12 @@
 {
   "upstream": "Flowseal/tg-ws-proxy",
-  "tag": "v1.8.0",
-  "title": "TG WS Proxy v1.8.0",
-  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.8.0",
-  "published_at": "2026-06-26T16:22:34Z",
-  "body": "## What's Changed\r\n* Локализация (ru/en) by @rozkomnadzor in https://github.com/Flowseal/tg-ws-proxy/pull/1025\r\n* Добавлен Fronting fallback (стандартное соединение с другим SNI как возможное решение участившихся проблем)\r\n  * Если Вы наблюдаете в логах постоянные **`fronting failed: TimeoutError`** и **`WS connect timed out`**, то сотрите в настройках всё из поля `DC->IP`\r\n* Увеличена доступность стандартных CF-прокси\r\n* Откат WS keepalive (по репортам вызывал больше проблем) in https://github.com/Flowseal/tg-ws-proxy/pull/1036\r\n* Исправлена иконка на MacOS by @IMDelewer in https://github.com/Flowseal/tg-ws-proxy/pull/1019\r\n\r\n## New Contributors\r\n* @rozkomnadzor made their first contribution in https://github.com/Flowseal/tg-ws-proxy/pull/1025\r\n\r\n---\r\n### [❤️ Поддержать развитие проекта](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md)\r\n\r\n\r\n> [!TIP]\r\n> Не можете скачать?\r\n> Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/\r\n\r\n\r",
+  "tag": "v1.8.1",
+  "title": "TG WS Proxy v1.8.1",
+  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.8.1",
+  "published_at": "2026-06-26T22:34:35Z",
+  "body": "* Исправлены переподключения, если указанный ip из `DC->IP` недоступен in https://github.com/Flowseal/tg-ws-proxy/commit/9ff95d12223ed1b093fe84f046797821b34aa5cf\r\n  * Первое подключение может занять в этом случае до 15 секунд, дальше будет обычная скорость подключения \r\n\r\n--- \r\n### [❤️ Поддержать развитие проекта](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md)\r\n\r\n> [!TIP]\r\n> Не можете скачать?\r\n> Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/\r",
   "hideself_notes": [
-    "Синхронизировано с upstream v1.8.0.",
+    "Синхронизировано с upstream v1.8.1.",
     "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
     "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
   ]
