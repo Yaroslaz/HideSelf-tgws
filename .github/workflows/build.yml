@@ -10,6 +10,11 @@ on:
         description: "Release version tag (e.g. v1.0.0-hs.3)"
         required: true
         default: "v1.0.0-hs.local"
+      prerelease:
+        description: "Publish as prerelease (not served via releases/latest)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -96,6 +101,6 @@ jobs:
           files: |
             dist/hideself-tgws_windows.exe
           draft: false
-          prerelease: false
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
