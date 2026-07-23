@@ -77,11 +77,11 @@ jobs:
             echo "Managed TG WS runtime artifact for HideSelf."
             echo
             if [ -f ".hideself/upstream-changelog.md" ]; then
-              echo "## Upstream Author Changelog"
+              echo "## Changelog"
               echo
               cat .hideself/upstream-changelog.md
             else
-              echo "## Upstream Author Changelog"
+              echo "## Changelog"
               echo
               echo "Changelog file not found in repository for this build."
             fi

@@ -180,6 +180,13 @@ jobs:
             RELEASE_BODY="Failed to fetch upstream changelog automatically."
           fi
 
+          # Strip the upstream author's funding/donation and download-mirror blocks
+          # so they never surface in the HideSelf client changelog.
+          RELEASE_BODY=$(printf '%s' "$RELEASE_BODY" \
+            | sed -E '/([Пп]оддержать (развитие|меня)|❤️[[:space:]]*[Пп]оддержать|Support the project|Sponsor)/,$d' \
+            | sed -E '/nowpayments|Funding\.md|\/donation|sourceforge\.net.*mirror/Id' \
+            | sed -E ':a;/^[[:space:]-]*$/{$d;N;ba}')
+
           jq -n \
             --arg tag "$LATEST_TAG" \
             --arg title "$RELEASE_TITLE" \

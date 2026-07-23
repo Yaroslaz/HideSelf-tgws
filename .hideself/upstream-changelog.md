@@ -1,26 +1,17 @@
-# Upstream Changelog (v1.8.1)
+# Обновление рантайма TG WS
 
-**Title:** TG WS Proxy v1.8.1
+Синхронизировано с upstream `Flowseal/tg-ws-proxy` (ветка `main`, коммит `8ac52f6`, поверх тега `v1.8.1`).
 
-**Source:** https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.8.1
+## Что нового
+- **Тестовые дата-центры Telegram** (`--force-test-dc`): рантайм распознаёт тестовые DC (10001–10003). В HideSelf для этого появился отдельный переключатель «Force Test DC» (доступен на этой и более новых сборках).
+- **Fronting в WS-пуле**: логика восстановления соединения перенесена в пул — быстрее переключается в сетях, где прямой WebSocket зависает.
+- **Автоматическая ротация WS-пула**: соединения старше ~120 секунд заменяются заранее, меньше задержек из-за протухших сокетов.
+- **Стабильность подключения**: исправлены переподключения, если IP из `DC → IP` недоступен. Первое подключение в этом случае может занять до ~15 секунд, дальше — обычная скорость.
+- Прочие багофиксы и улучшения из upstream `v1.7.3` … `main`.
 
-**Published at:** 2026-06-26T22:34:35Z
+## HideSelf
+- Публикуется managed Windows-бинарник `hideself-tgws_windows.exe`.
+- Метаданные установки включают upstream-тег и commit.
+- Формат релиза не меняется: только managed-рантайм для HideSelf.
 
-## Upstream Notes
-
-* Исправлены переподключения, если указанный ip из `DC->IP` недоступен in https://github.com/Flowseal/tg-ws-proxy/commit/9ff95d12223ed1b093fe84f046797821b34aa5cf
-  * Первое подключение может занять в этом случае до 15 секунд, дальше будет обычная скорость подключения 
-
---- 
-### [❤️ Поддержать развитие проекта](https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/Funding.md)
-
-> [!TIP]
-> Не можете скачать?
-> Добавьте `185.199.109.133 release-assets.githubusercontent.com` в hosts или воспользуйтесь зеркалом: https://sourceforge.net/projects/tg-ws-proxy.mirror/files/
-
-## HideSelf Adaptation
-
-- Синхронизировано с upstream тегом `v1.8.1`.
-- Формат релиза HideSelf runtime не меняется: публикуется managed Windows binary `hideself-tgws_windows.exe`.
-- При merge-конфликте для fork-owned файлов сохраняется версия HideSelf (`.github/workflows/build.yml`, `docs/README.md`).
-
+<!--hs-upstream tag=v1.8.1 commit=8ac52f6-->
