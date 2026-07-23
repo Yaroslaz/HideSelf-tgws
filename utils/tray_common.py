@@ -41,7 +41,10 @@ def _exe_dir() -> Optional[Path]:
         return None
     if not base:
         return None
-    p = Path(base).resolve()
+    try:
+        p = Path(base).resolve(strict=False)
+    except OSError:
+        p = Path(os.path.realpath(base))
     return p.parent if p.is_file() else p
 
 
@@ -334,6 +337,7 @@ def apply_proxy_config(cfg: dict) -> bool:
     pc.fallback_cfproxy = cfg.get("cfproxy", DEFAULT_CONFIG["cfproxy"])
     pc.cfproxy_user_domains = coerce_domain_list(cfg.get("cfproxy_user_domain", DEFAULT_CONFIG["cfproxy_user_domain"]))
     pc.cfproxy_worker_domains = coerce_domain_list(cfg.get("cfproxy_worker_domain", DEFAULT_CONFIG["cfproxy_worker_domain"]))
+    pc.force_test_dc = cfg.get("force_test_dc", DEFAULT_CONFIG["force_test_dc"])
     pc.ws_keepalive_interval = max(0, cfg.get("ws_keepalive_interval", DEFAULT_CONFIG["ws_keepalive_interval"]))
     return True
 
