@@ -1,12 +1,12 @@
 {
   "upstream": "Flowseal/tg-ws-proxy",
-  "tag": "v1.9.0",
-  "title": "TG WS Proxy v1.9.0",
-  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.9.0",
-  "published_at": "2026-07-28T08:54:30Z",
-  "body": "- Исправлен баг, когда автозапуск не применялся\r\n- Pool прямых соединений теперь всегда пересоздаёт idle соединения, если они закрылись\r\n- Более быстрые подключения к DC\r\n- Поддержка тестовых DC by @itzme1on in https://github.com/Flowseal/tg-ws-proxy/pull/1087\r\n  - https://github.com/Flowseal/tg-ws-proxy/blob/main/docs/TestDc.md\r",
+  "tag": "v1.9.1",
+  "title": "TG WS Proxy v1.9.1",
+  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.9.1",
+  "published_at": "2026-07-31T13:57:11Z",
+  "body": "- Исправлен upload с Cloudflare Workers\r\n- Улучшена работа с несколькими доменами Cloudflare Workers\r\n- Обновлена иконка (спасибо @scriptingstudio)\r",
   "hideself_notes": [
-    "Синхронизировано с upstream v1.9.0.",
+    "Синхронизировано с upstream v1.9.1.",
     "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
     "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
   ]
