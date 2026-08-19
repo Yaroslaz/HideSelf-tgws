@@ -1,13 +1,34 @@
 name: Build & Release (HideSelf Runtime)
 
+# Три входа в одну сборку:
+#   push тега      — ручной `git push --tags` от человека;
+#   workflow_call  — из sync-upstream.yml, потому что тег, отправленный
+#                    GITHUB_TOKEN, события `push` НЕ порождает, и такие релизы
+#                    молча не собирались (v1.0.0-hs.18…20);
+#   workflow_dispatch — отладочный прогон руками.
 on:
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version tag (e.g. v1.0.0-hs.21)"
+        required: true
+        type: string
+      ref:
+        description: "Git ref to build; defaults to the ref that started the run"
+        required: false
+        type: string
+      prerelease:
+        description: "Publish as prerelease (not served via releases/latest)"
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version tag (e.g. v1.0.0-hs.3)"
+        description: "Release version tag (e.g. v1.0.0-hs.21)"
         required: true
         default: "v1.0.0-hs.local"
       prerelease:
@@ -25,6 +46,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -64,6 +87,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -75,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}"
+          TAG="${{ inputs.version || github.ref_name }}"
           {
             echo "# HideSelf TGWS Runtime ${TAG}"
             echo
@@ -95,12 +120,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}
-          name: "HideSelf TGWS Runtime ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}"
+          tag_name: ${{ inputs.version || github.ref_name }}
+          name: "HideSelf TGWS Runtime ${{ inputs.version || github.ref_name }}"
           body_path: RELEASE_NOTES.md
           files: |
             dist/hideself-tgws_windows.exe
           draft: false
-          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+          prerelease: ${{ inputs.prerelease || false }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

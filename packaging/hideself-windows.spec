@@ -1,16 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 repo_root = os.path.abspath(os.path.join(os.path.dirname(SPEC), os.pardir))
+
+# proxy/utils.py pins the TLS trust store to certifi.where(), so the CA bundle
+# has to travel inside the frozen exe; otherwise the CF proxy domain refresh
+# silently falls back to the built-in list. Upstream added the same line to the
+# windows/linux/macos specs in v1.10.0 — keep this one in step.
+certifi_datas = collect_data_files('certifi')
 
 a = Analysis(
     [os.path.join(os.path.dirname(SPEC), os.pardir, "proxy", "tg_ws_proxy.py")],
     pathex=[repo_root],
     binaries=[],
-    datas=[],
+    datas=certifi_datas,
     hiddenimports=collect_submodules("proxy") + [
         "cryptography.hazmat.primitives.ciphers",
         "cryptography.hazmat.primitives.ciphers.algorithms",

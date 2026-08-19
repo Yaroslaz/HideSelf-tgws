@@ -16,6 +16,10 @@ env:
 jobs:
   sync-upstream:
     runs-on: ubuntu-latest
+    outputs:
+      update_needed: ${{ steps.resolve.outputs.update_needed }}
+      upstream_tag: ${{ steps.resolve.outputs.latest_tag }}
+      next_tag: ${{ steps.hs-tag.outputs.next_tag }}
 
     steps:
       - name: Checkout fork
@@ -165,6 +169,7 @@ jobs:
           set -euo pipefail
 
           LATEST_TAG="${{ steps.resolve.outputs.latest_tag }}"
+          UPSTREAM_SHA=$(git rev-parse --short "${{ steps.resolve.outputs.tag_sha }}")
           mkdir -p .hideself
 
           RELEASE_JSON=$(gh api "repos/Flowseal/tg-ws-proxy/releases/tags/${LATEST_TAG}" || true)
@@ -193,6 +198,7 @@ jobs:
             --arg url "$RELEASE_URL" \
             --arg published_at "$RELEASE_PUBLISHED" \
             --arg body "$RELEASE_BODY" \
+            --arg upstream_sha "$UPSTREAM_SHA" \
             --arg adaptation_1 "Синхронизировано с upstream ${LATEST_TAG}." \
             --arg adaptation_2 "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe)." \
             --arg adaptation_3 "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах." \
@@ -202,6 +208,7 @@ jobs:
               title: ($title | select(length > 0)),
               url: ($url | select(length > 0)),
               published_at: ($published_at | select(length > 0)),
+              commit: $upstream_sha,
               body: $body,
               hideself_notes: [
                 $adaptation_1,
@@ -235,6 +242,10 @@ jobs:
             echo "- Формат релиза HideSelf runtime не меняется: публикуется managed Windows binary \`hideself-tgws_windows.exe\`."
             echo "- При merge-конфликте для fork-owned файлов сохраняется версия HideSelf (\`.github/workflows/build.yml\`, \`docs/README.md\`)."
             echo
+            # Клиент (src-tauri/src/tg_ws_proxy.rs, parse_upstream_marker) читает
+            # эту строку из тела релиза и показывает апстрим-тег с коммитом в
+            # карточке модуля. Это HTML-комментарий — на экране его не видно.
+            echo "<!--hs-upstream tag=${LATEST_TAG} commit=${UPSTREAM_SHA}-->"
           } > .hideself/upstream-changelog.md
 
           git add .hideself/upstream-changelog.json .hideself/upstream-changelog.md
@@ -275,3 +286,15 @@ jobs:
         if: steps.resolve.outputs.update_needed == 'true'
         run: |
           echo "Synced upstream ${{ steps.resolve.outputs.latest_tag }} into $BASE_BRANCH and created release tag ${{ steps.hs-tag.outputs.next_tag }}."
+
+  # Тег отправлен GITHUB_TOKEN, поэтому `on: push: tags` в build.yml не сработает
+  # — сборку вызываем сами. Именно на этом молча встали релизы hs.18…hs.20.
+  release:
+    needs: sync-upstream
+    if: needs.sync-upstream.outputs.update_needed == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.sync-upstream.outputs.next_tag }}
+      ref: ${{ needs.sync-upstream.outputs.next_tag }}

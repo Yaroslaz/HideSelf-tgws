@@ -19,3 +19,4 @@
 - Формат релиза HideSelf runtime не меняется: публикуется managed Windows binary `hideself-tgws_windows.exe`.
 - При merge-конфликте для fork-owned файлов сохраняется версия HideSelf (`.github/workflows/build.yml`, `docs/README.md`).
 
+<!--hs-upstream tag=v1.10.0 commit=b2a8074-->
