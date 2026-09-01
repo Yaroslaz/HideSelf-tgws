@@ -227,25 +227,37 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
     media_tag = ' media' if is_media else ''
     ws = None
     chosen_domain = None
-
-    log.info("[%s] DC%d%s -> trying CF proxy",
-            label, dc, media_tag)
+    tried = 0
 
     for base_domain in balancer.get_domains_for_dc(dc):
+        # Announced from inside the loop: with every front on cooldown the
+        # balancer yields nothing, and a bare "trying CF proxy" followed by
+        # silence read like a hang rather than a deliberate skip.
+        if not tried:
+            log.info("[%s] DC%d%s -> trying CF proxy",
+                     label, dc, media_tag)
+        tried += 1
         domain = f'kws{dc}.{base_domain}'
         try:
             ws = await RawWebSocket.connect(domain, domain, timeout=10.0)
             chosen_domain = base_domain
             break
         except Exception as exc:
-            log.warning("[%s] DC%d%s CF proxy failed: %s",
-                        label, dc, media_tag, repr(exc))
+            cooldown = balancer.report_failure(base_domain)
+            log.warning("[%s] DC%d%s CF proxy failed: %s (%s out for %ds)",
+                        label, dc, media_tag, repr(exc),
+                        base_domain, int(cooldown))
 
     if ws is None:
+        if not tried:
+            log.info("[%s] DC%d%s -> CF proxy skipped, every front on cooldown",
+                     label, dc, media_tag)
         return False
 
-    if chosen_domain and balancer.update_domain_for_dc(dc, chosen_domain):
-        log.info("[%s] Switched active CF domain", label)
+    if chosen_domain:
+        balancer.report_success(chosen_domain)
+        if balancer.update_domain_for_dc(dc, chosen_domain):
+            log.info("[%s] Switched active CF domain", label)
 
     stats.connections_cfproxy += 1
     await ws.send(relay_init)
