@@ -195,21 +195,31 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
         path = f'/apiws?{query}'
 
         ws = None
-        for worker_domain in cf_worker_pool.available_domains(worker_domains):
+        available = cf_worker_pool.available_domains(worker_domains)
+        for worker_domain in available:
             log.info("[%s] DC%d%s -> trying CF worker %s for %s",
                      label, dc, media_tag, worker_domain, fallback_dst)
 
             try:
                 ws = await RawWebSocket.connect(worker_domain, worker_domain,
                                                 timeout=10.0, path=path)
+                cf_worker_pool.report_success(worker_domain)
                 break
             except Exception as exc:
-                cf_worker_pool.report_failure(worker_domain, exc)
-                log.warning("[%s] DC%d%s CF worker %s failed: %s",
-                            label, dc, media_tag, worker_domain, repr(exc))
+                cooldown = cf_worker_pool.report_failure(worker_domain, exc)
+                log.warning("[%s] DC%d%s CF worker %s failed: %s "
+                            "(resting %ds)",
+                            label, dc, media_tag, worker_domain, repr(exc),
+                            int(cooldown))
                 continue
 
         if ws is None:
+            # Said out loud: with every worker resting the loop above never
+            # runs, and a silent `return False` reads like the method was
+            # never attempted at all.
+            if not available:
+                log.info("[%s] DC%d%s -> CF worker skipped, every worker "
+                         "resting", label, dc, media_tag)
             return False
 
     stats.connections_cfproxy += 1

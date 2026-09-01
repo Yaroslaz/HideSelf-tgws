@@ -220,11 +220,30 @@ class _WsPool:
 class _CfWorkerPool:
     WS_POOL_MAX_AGE = 100.0
     PER_DC_LIMIT = 1
+    # An ordinary refusal (timeout, reset) puts the worker aside briefly; the
+    # next success clears it. Without this a worker that is simply down is
+    # re-dialled on every client fallback, which is what the CFProxy fronts
+    # used to do.
+    FAILURE_COOLDOWN = 60.0
+    # HTTP 429 is what a Worker past its free-plan daily quota answers
+    # (Cloudflare error 1027), so it earns a much longer rest. Not "until UTC
+    # midnight" as first drafted: 429 also covers burst limits, and a whole
+    # day without the worker for one misread costs more than a few probes.
+    QUOTA_COOLDOWN = 900.0
+    COOLDOWN_MAX = 21600.0
+    BACKOFF_STEPS = 8
+    # Refill backoff, in the shape _WsPool already uses: without it, refilling
+    # on a miss would dial a dead worker once per client fallback.
+    REFILL_BACKOFF_INITIAL = 60.0
+    REFILL_BACKOFF_MAX = 3600.0
 
     def __init__(self):
         self._idle: Dict[int, deque] = {}
         self._refilling: Set[int] = set()
-        self._exhausted_until: Dict[str, float] = {}
+        self._unavailable_until: Dict[str, float] = {}
+        self._failures: Dict[str, int] = {}
+        self._refill_failures: Dict[int, int] = {}
+        self._refill_after: Dict[int, float] = {}
 
     async def get(self, dc: int, fallback_dst: str,
                   worker_domains: List[str]
@@ -246,14 +265,21 @@ class _CfWorkerPool:
             log.debug(
                 "CF worker pool hit DC%d via %s (age=%.1fs, left=%d)",
                 dc, worker_domain, age, len(bucket))
+            self.report_success(worker_domain)
             self._schedule_refill(dc, fallback_dst, worker_domains)
             return ws, worker_domain
 
+        # Refilled on a miss too. Scheduling only on a hit was a trap: a hit
+        # needs a filled pool and filling needed a hit, so once the warmup
+        # batch expired cf_pool stayed at 0/N for the rest of the run and every
+        # connection paid a cold handshake through Cloudflare.
         stats.cf_pool_misses += 1
+        self._schedule_refill(dc, fallback_dst, worker_domains)
         return None
 
     def _schedule_refill(self, dc, fallback_dst, worker_domains):
-        if dc in self._refilling:
+        if (dc in self._refilling
+                or time.monotonic() < self._refill_after.get(dc, 0)):
             return
         self._refilling.add(dc)
         asyncio.create_task(self._refill(
@@ -266,14 +292,35 @@ class _CfWorkerPool:
             needed = target_size - len(bucket)
             if needed <= 0:
                 return
+            # Every worker is resting: there is nothing to dial, and counting
+            # that as a refill failure would stretch the backoff on evidence
+            # the pool never gathered.
+            if not self.available_domains(worker_domains):
+                return
 
+            connected = 0
             for _ in range(needed):
-                connected = await self._connect_one(
+                result = await self._connect_one(
                     worker_domains, fallback_dst, dc)
-                if connected is None:
+                if result is None:
                     break
-                ws, worker_domain = connected
+                ws, worker_domain = result
                 bucket.append((ws, time.monotonic(), worker_domain))
+                connected += 1
+            if connected:
+                self._refill_failures.pop(dc, None)
+                self._refill_after.pop(dc, None)
+            else:
+                failures = self._refill_failures.get(dc, 0) + 1
+                self._refill_failures[dc] = failures
+                delay = min(
+                    self.REFILL_BACKOFF_INITIAL
+                    * (2 ** min(failures - 1, 6)),
+                    self.REFILL_BACKOFF_MAX,
+                )
+                self._refill_after[dc] = time.monotonic() + delay
+                log.info("CF worker pool refill failed for DC%d, retry in %.0fs",
+                         dc, delay)
             log.debug("CF worker pool refilled DC%d: %d ready",
                       dc, len(bucket))
         finally:
@@ -295,32 +342,49 @@ class _CfWorkerPool:
         return None
 
     def available_domains(self, worker_domains: List[str]) -> List[str]:
-        now = time.time()
+        # Monotonic, not wall clock: a cooldown must not be cut short or
+        # stretched into hours because the system clock moved.
+        now = time.monotonic()
         domains = []
         for domain in worker_domains:
             if domain in domains:
                 continue
-            exhausted_until = self._exhausted_until.get(domain, 0)
-            if exhausted_until > now:
+            unavailable_until = self._unavailable_until.get(domain, 0)
+            if unavailable_until > now:
                 continue
-            if exhausted_until:
-                self._exhausted_until.pop(domain, None)
+            if unavailable_until:
+                self._unavailable_until.pop(domain, None)
             domains.append(domain)
         random.shuffle(domains)
         return domains
 
-    def report_failure(self, worker_domain: str, exc: Exception) -> None:
-        return  # TODO: check status code after daily limit reached
-        if not isinstance(exc, WsHandshakeError) or exc.status_code != 429:
-            return
+    def report_success(self, worker_domain: str) -> None:
+        self._unavailable_until.pop(worker_domain, None)
+        self._failures.pop(worker_domain, None)
 
-        now = time.time()
-        if self._exhausted_until.get(worker_domain, 0) > now:
-            return
-        exhausted_until = now + (86400 - (now % 86400))
-        self._exhausted_until[worker_domain] = exhausted_until
-        log.warning(
-            "CF worker %s reached its request limit, disabled for %d seconds", worker_domain, int(exhausted_until - now))
+    def report_failure(self, worker_domain: str, exc: Exception) -> float:
+        """Rest a failing worker and say for how long.
+
+        The body used to sit behind a bare `return`, so no worker was ever set
+        aside: an unreachable one was re-dialled on every fallback, and one
+        past its quota kept being asked until the day rolled over.
+        """
+        quota = isinstance(exc, WsHandshakeError) and exc.status_code == 429
+        base = self.QUOTA_COOLDOWN if quota else self.FAILURE_COOLDOWN
+
+        failures = min(self._failures.get(worker_domain, 0) + 1,
+                       self.BACKOFF_STEPS)
+        self._failures[worker_domain] = failures
+        cooldown = min(base * (2 ** (failures - 1)), self.COOLDOWN_MAX)
+        self._unavailable_until[worker_domain] = time.monotonic() + cooldown
+
+        if quota:
+            log.warning("CF worker %s reached its request limit, "
+                        "resting for %ds", worker_domain, int(cooldown))
+        else:
+            log.debug("CF worker %s set aside for %ds after %s",
+                      worker_domain, int(cooldown), repr(exc))
+        return cooldown
 
     async def _quiet_close(self, ws):
         try:
@@ -346,7 +410,10 @@ class _CfWorkerPool:
     def reset(self):
         self._idle.clear()
         self._refilling.clear()
-        self._exhausted_until.clear()
+        self._unavailable_until.clear()
+        self._failures.clear()
+        self._refill_failures.clear()
+        self._refill_after.clear()
 
 
 ws_pool = _WsPool()
