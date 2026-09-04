@@ -208,7 +208,7 @@ def update_ctk_form(
             btns.append(btn_upd)
         btn_pg = ctk.CTkButton(
             row, text=t("button.page"), width=88, height=34,
-            font=(theme.ui_font_family, 13), command=lambda: _close_with("open"),
+            font=(theme.ui_font_family, 13), command=lambda: webbrowser.open(release_url or RELEASES_PAGE_URL),
         )
         btn_pg.pack(side="left", padx=(0, 6))
         btns.append(btn_pg)
