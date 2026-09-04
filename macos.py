@@ -348,6 +348,7 @@ def _edit_config_dialog() -> None:
         width=width,
         height=height,
         theme=theme,
+        topmost=False,
         after_create=lambda window: _activate_app(),
     )
     _settings_window = root
@@ -471,6 +472,7 @@ def _show_first_run() -> None:
         width=width,
         height=height,
         theme=theme,
+        topmost=False,
         after_create=lambda window: _activate_app(),
     )
 

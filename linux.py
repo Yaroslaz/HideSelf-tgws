@@ -147,8 +147,8 @@ def _edit_config_dialog() -> None:
         theme = ctk_theme_for_platform()
         w, h = CONFIG_DIALOG_SIZE
         root = create_ctk_toplevel(
-            ctk, title=t("app.settings_title"), width=w, height=h, theme=theme,
-            after_create=_apply_window_icon,
+            ctk, title=t("app.settings_title"), width=w, height=h, 
+            theme=theme, topmost=False, after_create=_apply_window_icon
         )
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
@@ -244,7 +244,7 @@ def _show_first_run() -> None:
         w, h = FIRST_RUN_SIZE
         root = create_ctk_toplevel(
             ctk, title=t("app.name"), width=w, height=h, theme=theme,
-            after_create=_apply_window_icon,
+            topmost=False, after_create=_apply_window_icon,
         )
 
         def on_done(open_tg: bool) -> None:
