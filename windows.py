@@ -47,6 +47,9 @@ from utils.tray_common import (
     quit_ctk, release_lock, restart_proxy,
     save_config, start_proxy, stop_proxy, tg_proxy_url,
 )
+from utils.update_check import (
+    get_status, get_update_asset, run_check, RELEASES_PAGE_URL, 
+)
 from ui.ctk_tray_ui import (
     install_tray_config_buttons, install_tray_config_form,
     populate_first_run_window, tray_settings_scroll_and_footer,
@@ -62,6 +65,7 @@ _tray_icon: Optional[object] = None
 _config: dict = {}
 _exiting = False
 _win_mutex_handle = None
+_update_flow_lock = threading.Lock()
 
 _ERROR_ALREADY_EXISTS = 183
 
@@ -324,23 +328,31 @@ def _trigger_update_flow(icon=None, item=None) -> None:
     button, so an update can still be started after the initial startup
     prompt was skipped/closed.
     """
-    from utils.update_check import RELEASES_PAGE_URL, get_status, get_update_asset
-
-    st = get_status()
-    if not st.get("has_update"):
+    if not _update_flow_lock.acquire(blocking=False):
         return
-    url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
-    ver = st.get("latest") or "?"
-    asset = get_update_asset(Path(sys.executable), __version__) if IS_FROZEN else None
 
     def _show() -> None:
-        choice = update_ctk_form(
-            t("update.available", version=ver),
-            download_url=asset[0] if asset else None,
-            release_url=url,
-        )
-        if choice == "open":
-            webbrowser.open(url)
+        try:
+            if _exiting:
+                return
+            st = get_status()
+            if not st.get("has_update"):
+                return
+            url = (st.get("html_url") or "").strip() or RELEASES_PAGE_URL
+            ver = st.get("latest") or "?"
+            asset = get_update_asset(Path(sys.executable), __version__) if IS_FROZEN else None
+
+            choice = update_ctk_form(
+                t("update.available", version=ver),
+                download_url=asset[0] if asset else None,
+                release_url=url,
+            )
+            if choice == "open":
+                webbrowser.open(url)
+        except Exception as exc:
+            log.warning("Update flow failed: %s", repr(exc))
+        finally:
+            _update_flow_lock.release()
 
     threading.Thread(target=_show, daemon=True, name="manual-update").start()
 
@@ -354,8 +366,6 @@ def _maybe_do_update(cfg: dict, is_exiting) -> None:
         if is_exiting():
             return
         try:
-            from utils.update_check import run_check
-
             run_check(__version__)
             if _tray_icon is not None:
                 _tray_icon.menu = _build_menu()
@@ -629,17 +639,19 @@ def _build_menu():
         pystray.MenuItem(t("tray.restart"), _on_restart),
         pystray.MenuItem(t("tray.settings"), _on_edit_config),
         pystray.MenuItem(t("tray.logs"), _on_open_logs),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(t("tray.exit"), _on_exit),
     ]
-    from utils.update_check import get_status
+
     st = get_status()
     if st.get("has_update"):
-        items.append(pystray.Menu.SEPARATOR)
-        items.append(pystray.MenuItem(
-            t("tray.update", current=__version__, new=st.get("latest") or "?"),
-            _trigger_update_flow,
-        ))
-    items.append(pystray.Menu.SEPARATOR)
-    items.append(pystray.MenuItem(t("tray.exit"), _on_exit))
+        items[-2:-2] = [
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                t("tray.update", current=__version__, new=st.get("latest") or "?"),
+                _trigger_update_flow,
+            )
+        ]
     return pystray.Menu(*items)
 
 
