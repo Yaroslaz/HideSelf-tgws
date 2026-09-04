@@ -150,6 +150,7 @@ def update_ctk_form(
             width=310 if IS_FROZEN else 210,
             height=130 if IS_FROZEN else 100,
             theme=theme,
+            topmost=False,
             after_create=lambda r: r.iconbitmap(ICON_PATH),
         )
         frame = main_content_frame(ctk, root, theme, padx=16, pady=14)
@@ -510,7 +511,7 @@ def _edit_config_dialog() -> None:
 
         root = create_ctk_toplevel(
             ctk, title=t("app.settings_title"), width=w, height=h, theme=theme,
-            after_create=lambda r: r.iconbitmap(ICON_PATH),
+            topmost=False, after_create=lambda r: r.iconbitmap(ICON_PATH),
         )
         fpx, fpy = CONFIG_DIALOG_FRAME_PAD
         frame = main_content_frame(ctk, root, theme, padx=fpx, pady=fpy)
@@ -609,7 +610,7 @@ def _show_first_run() -> None:
         w, h = FIRST_RUN_SIZE
         root = create_ctk_toplevel(
             ctk, title=t("app.name"), width=w, height=h, theme=theme,
-            after_create=lambda r: r.iconbitmap(ICON_PATH),
+            topmost=False, after_create=lambda r: r.iconbitmap(ICON_PATH),
         )
 
         def on_done(open_tg: bool) -> None:
