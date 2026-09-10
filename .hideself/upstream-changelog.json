@@ -1,13 +1,13 @@
 {
   "upstream": "Flowseal/tg-ws-proxy",
-  "tag": "v1.10.1",
-  "title": "TG WS Proxy v1.10.1",
-  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.10.1",
-  "published_at": "2026-09-04T15:05:08Z",
-  "commit": "be485a3",
-  "body": "### What's Changed\r\n* Улучшена стабильность прямых подключений, что должно снизить общую нагрузку на CF-прокси\r\n* Добавлена кнопка для вызова диалогового окна обновления в трей и меню настроек by @f4rceful in https://github.com/Flowseal/tg-ws-proxy/pull/1213\r\n* Исправлены ошибки запуска на старых версиях Linux by @mvanhorn in https://github.com/Flowseal/tg-ws-proxy/pull/1238\r\n* Открытие страницы нового релиза больше не закрывает диалоговое окно обновления\r\n\r\n### New Contributors\r\n* @mvanhorn made their first contribution in https://github.com/Flowseal/tg-ws-proxy/pull/1238\r\n\r\n**Full Changelog**: https://github.com/Flowseal/tg-ws-proxy/compare/v1.10.0...v1.10.1\r",
+  "tag": "v1.10.2",
+  "title": "TG WS Proxy v1.10.2",
+  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.10.2",
+  "published_at": "2026-09-07T13:42:07Z",
+  "commit": "f200e33",
+  "body": "* Логирование автоматически скрывает домены\r\n* Исправлен запуск на Linux\r",
   "hideself_notes": [
-    "Синхронизировано с upstream v1.10.1.",
+    "Синхронизировано с upstream v1.10.2.",
     "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
     "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
   ]
