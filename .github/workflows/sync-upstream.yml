@@ -108,6 +108,14 @@ jobs:
               if [[ "$file" == .github/workflows/* ]]; then
                 IS_ALLOWED=true
               fi
+              # Файла нет в HEAD — значит его удалил форк (конфликт modify/delete).
+              # Так встала цепочка на v1.10.2: апстрим тронул .github/FUNDING.yml и
+              # docs/Funding.md, вычищенные при де-брендинге, и синк падал каждые
+              # 6 часов. Перечислять такие файлы поимённо бессмысленно — список
+              # растёт с каждой чисткой, а правило одно.
+              if ! git cat-file -e "HEAD:$file" 2>/dev/null; then
+                IS_ALLOWED=true
+              fi
               if [ "$IS_ALLOWED" != "true" ]; then
                 echo "Unexpected conflict file: $file"
                 git status --short
@@ -125,6 +133,14 @@ jobs:
                 else
                   git rm -f --ignore-unmatch "$file"
                 fi
+                continue
+              fi
+
+              # git checkout --ours здесь не годится: нашей версии файла нет,
+              # и команда падает с "does not have our version".
+              if ! git cat-file -e "HEAD:$file" 2>/dev/null; then
+                echo "Fork deleted this file on purpose; keeping it deleted: $file"
+                git rm -f --ignore-unmatch -- "$file"
                 continue
               fi
 
