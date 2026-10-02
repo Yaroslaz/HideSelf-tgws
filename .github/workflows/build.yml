@@ -7,6 +7,8 @@ name: Build & Release (HideSelf Runtime)
 #                    молча не собирались (v1.0.0-hs.18…20);
 #   workflow_dispatch — отладочный прогон руками.
 on:
+  pull_request:
+    branches: [main]
   push:
     tags:
       - "v*"
@@ -43,6 +45,10 @@ permissions:
 jobs:
   build-windows-runtime:
     runs-on: windows-latest
+    timeout-minutes: 45
+    concurrency:
+      group: tgws-runtime-${{ inputs.ref || github.ref }}
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -68,8 +74,14 @@ jobs:
         env:
           PYINSTALLER_COMPILE_BOOTLOADER: 1
 
+      - name: Test runtime and VPN retry safeguards
+        run: python -m unittest discover -s tests -q
+
       - name: Build HideSelf runtime EXE
         run: pyinstaller packaging/hideself-windows.spec --noconfirm
+
+      - name: Verify frozen runtime capabilities and listener
+        run: python scripts/smoke-runtime.py dist/hideself-tgws.exe
 
       - name: Normalize artifact name
         shell: pwsh
@@ -82,8 +94,10 @@ jobs:
           path: dist/hideself-tgws_windows.exe
 
   release:
+    if: github.event_name != 'pull_request'
     needs: [build-windows-runtime]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
