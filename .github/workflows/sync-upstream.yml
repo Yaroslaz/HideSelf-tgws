@@ -57,22 +57,36 @@ jobs:
 
           TAG_SHA=$(git rev-list -n 1 "$LATEST_TAG")
           if git merge-base --is-ancestor "$TAG_SHA" "origin/$BASE_BRANCH"; then
-            UPDATE_NEEDED=false
+            MERGE_NEEDED=false
           else
-            UPDATE_NEEDED=true
+            MERGE_NEEDED=true
+          fi
+
+          # A reviewed manual merge must still produce a runtime release.
+          # Checking main alone skipped hs.26 after the conflict was fixed.
+          LAST_HS_TAG=$(git tag --list "${HS_TAG_PREFIX}*" --sort=-v:refname | head -n 1 || true)
+          UPDATE_NEEDED=true
+          if [ "$MERGE_NEEDED" = false ] && [ -n "${LAST_HS_TAG:-}" ] \
+            && git merge-base --is-ancestor "$TAG_SHA" "$LAST_HS_TAG"; then
+            UPDATE_NEEDED=false
           fi
 
           echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
           echo "tag_sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
           echo "update_needed=$UPDATE_NEEDED" >> "$GITHUB_OUTPUT"
+          echo "merge_needed=$MERGE_NEEDED" >> "$GITHUB_OUTPUT"
 
       - name: Stop when no update is needed
         if: steps.resolve.outputs.update_needed == 'false'
         run: |
-          echo "Upstream tag ${{ steps.resolve.outputs.latest_tag }} is already included in $BASE_BRANCH."
+          echo "Upstream tag ${{ steps.resolve.outputs.latest_tag }} is already merged and included in a HideSelf release tag."
+
+      - name: Prepare main for validation and release
+        if: steps.resolve.outputs.update_needed == 'true'
+        run: git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
 
       - name: Merge upstream tag into main
-        if: steps.resolve.outputs.update_needed == 'true'
+        if: steps.resolve.outputs.merge_needed == 'true'
         shell: bash
         run: |
           set -euo pipefail
