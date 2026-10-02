@@ -342,9 +342,11 @@ jobs:
           set -euo pipefail
 
           NEXT_TAG="${{ steps.hs-tag.outputs.next_tag }}"
-          git push origin "$BASE_BRANCH"
           git tag -a "$NEXT_TAG" -m "HideSelf TGWS runtime release ${NEXT_TAG} (upstream ${{ steps.resolve.outputs.latest_tag }})"
-          git push origin "refs/tags/${NEXT_TAG}"
+          # Send the commit and annotated tag in one transaction. Separate
+          # pushes accepted main but rejected the tag with "missing necessary
+          # objects" on GitHub; no automatic retry should hide that failure.
+          git push --atomic --no-thin origin "$BASE_BRANCH" "refs/tags/${NEXT_TAG}"
 
       - name: Summary
         if: steps.claim.outputs.claimed == 'true'
