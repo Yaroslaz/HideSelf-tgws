@@ -56,6 +56,8 @@ jobs:
       - name: Resolve latest upstream tag
         id: resolve
         shell: bash
+        env:
+          MANUAL_RETRY: ${{ github.event_name == 'workflow_dispatch' && inputs.retry_failed }}
         run: |
           set -euo pipefail
 
@@ -79,6 +81,12 @@ jobs:
           if [ "$MERGE_NEEDED" = false ] && [ -n "${LAST_HS_TAG:-}" ] \
             && git merge-base --is-ancestor "$TAG_SHA" "$LAST_HS_TAG"; then
             UPDATE_NEEDED=false
+          fi
+
+          # A failed Windows build may already have pushed the hs tag. An
+          # explicit manual retry must still be able to create a new attempt.
+          if [ "$MANUAL_RETRY" = true ]; then
+            UPDATE_NEEDED=true
           fi
 
           echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
