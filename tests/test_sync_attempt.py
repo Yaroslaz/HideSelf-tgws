@@ -14,6 +14,58 @@ spec.loader.exec_module(sync_attempt)
 
 
 class SyncAttemptTests(unittest.TestCase):
+    def test_release_push_updates_branch_and_tag_together_or_neither(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/sync-upstream.yml").read_text(encoding="utf-8")
+        block = workflow.split("      - name: Push main and release tag\n", 1)[1]
+        block = block.split("      - name:", 1)[0]
+        script = textwrap.dedent(block.split("        run: |\n", 1)[1])
+        bash = (r"C:\Program Files\Git\bin\bash.exe" if os.name == "nt" else shutil.which("bash"))
+        with tempfile.TemporaryDirectory(prefix="hideself-release-test-") as directory:
+            remote = Path(directory) / "remote.git"
+            local = Path(directory) / "local"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+            subprocess.run(["git", "init", str(local)], check=True, capture_output=True)
+
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=local,
+                                               stderr=subprocess.STDOUT, text=True).strip()
+
+            git("config", "user.name", "Workflow test")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "commit.gpgsign", "false")
+            git("config", "tag.gpgsign", "false")
+            git("checkout", "-b", "main")
+            git("commit", "--allow-empty", "-m", "initial")
+            git("remote", "add", "origin", str(remote))
+            git("push", "origin", "main")
+            git("commit", "--allow-empty", "-m", "new runtime")
+            shell_file = local / "publish.sh"
+
+            def publish(tag):
+                shell_file.write_text(script.replace("${{ steps.hs-tag.outputs.next_tag }}", tag)
+                                      .replace("${{ steps.resolve.outputs.latest_tag }}", "v1.10.4"),
+                                      encoding="utf-8", newline="\n")
+                return subprocess.run([bash, shell_file.as_posix()], cwd=local,
+                                      env=dict(os.environ, BASE_BRANCH="main"),
+                                      capture_output=True, text=True)
+
+            result = publish("v1.0.0-hs.26")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            published = git("rev-parse", "HEAD")
+            remote_refs = git("ls-remote", "origin", "refs/heads/main", "refs/tags/v1.0.0-hs.26^{}")
+            self.assertEqual([line.split()[0] for line in remote_refs.splitlines()], [published, published])
+
+            # Another writer advances main while this run prepares its tag.
+            git("commit", "--allow-empty", "-m", "pending release")
+            git("checkout", "-b", "racer", published)
+            git("commit", "--allow-empty", "-m", "concurrent main update")
+            raced = git("rev-parse", "HEAD")
+            git("push", "origin", "racer:main")
+            git("checkout", "main")
+            self.assertNotEqual(publish("v1.0.0-hs.27").returncode, 0)
+            self.assertEqual(git("ls-remote", "origin", "refs/heads/main").split()[0], raced)
+            self.assertEqual(git("ls-remote", "origin", "refs/tags/v1.0.0-hs.27"), "")
+
     def test_workflow_plan_including_manual_retry_after_pushed_failed_build_tag(self):
         # Execute the actual workflow resolver, rather than a copied predicate.
         workflow = (Path(__file__).parents[1] / ".github/workflows/sync-upstream.yml").read_text(encoding="utf-8")
