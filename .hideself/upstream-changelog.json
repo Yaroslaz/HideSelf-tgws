@@ -5,10 +5,10 @@
   "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.10.4",
   "published_at": "2026-09-19T19:55:38Z",
   "commit": "70b982d",
-  "body": "TLS использует корневые сертификаты Certifi и проверяет цепочку сертификата.\nДобавлены режим Cloudflare без TLS и отключение IP-маршрутов DC флагом --dc-ip без значения.",
+  "body": "* Добавлен Certifi в качестве основной коллекции корневых сертификатов для TLS соединений\r",
   "hideself_notes": [
-    "Сохранены ограничения повторных подключений и восстановление пула Worker для стабильной работы с TUN.",
-    "Windows-сборка остаётся headless managed-бинарником hideself-tgws_windows.exe.",
-    "CI проверяет тесты и запуск упакованного EXE до публикации. Конфликты runtime больше не разрешаются заменой всей реализации upstream."
+    "Синхронизировано с upstream v1.10.4.",
+    "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
+    "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
   ]
 }
