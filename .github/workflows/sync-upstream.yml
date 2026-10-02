@@ -2,8 +2,17 @@ name: Sync Upstream and Auto Release
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 2 * * *"
   workflow_dispatch:
+    inputs:
+      retry_failed:
+        description: "Explicitly allow one new attempt for a previously failed version"
+        type: boolean
+        default: false
+
+concurrency:
+  group: tgws-upstream-sync
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -16,8 +25,9 @@ env:
 jobs:
   sync-upstream:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
-      update_needed: ${{ steps.resolve.outputs.update_needed }}
+      update_needed: ${{ steps.claim.outputs.claimed }}
       upstream_tag: ${{ steps.resolve.outputs.latest_tag }}
       next_tag: ${{ steps.hs-tag.outputs.next_tag }}
 
@@ -81,12 +91,22 @@ jobs:
         run: |
           echo "Upstream tag ${{ steps.resolve.outputs.latest_tag }} is already merged and included in a HideSelf release tag."
 
-      - name: Prepare main for validation and release
+      - name: Claim one attempt before merge and build
+        id: claim
         if: steps.resolve.outputs.update_needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_TAG: ${{ steps.resolve.outputs.latest_tag }}
+          UPSTREAM_SHA: ${{ steps.resolve.outputs.tag_sha }}
+          MANUAL_RETRY: ${{ github.event_name == 'workflow_dispatch' && inputs.retry_failed }}
+        run: python scripts/claim-sync-attempt.py
+
+      - name: Prepare main for validation and release
+        if: steps.claim.outputs.claimed == 'true'
         run: git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
 
       - name: Merge upstream tag into main
-        if: steps.resolve.outputs.merge_needed == 'true'
+        if: steps.claim.outputs.claimed == 'true' && steps.resolve.outputs.merge_needed == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -183,13 +203,13 @@ jobs:
           git commit -m "Merge tag '${{ steps.resolve.outputs.latest_tag }}'"
 
       - name: Setup Python for runtime validation
-        if: steps.resolve.outputs.update_needed == 'true'
+        if: steps.claim.outputs.claimed == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Validate merged runtime before tagging
-        if: steps.resolve.outputs.update_needed == 'true'
+        if: steps.claim.outputs.claimed == 'true'
         run: |
           python -m pip install cryptography certifi
           python -m compileall -q proxy
@@ -197,7 +217,7 @@ jobs:
           python -m proxy.tg_ws_proxy --help
 
       - name: Capture upstream changelog
-        if: steps.resolve.outputs.update_needed == 'true'
+        if: steps.claim.outputs.claimed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -290,7 +310,7 @@ jobs:
           fi
 
       - name: Calculate next HideSelf release tag
-        if: steps.resolve.outputs.update_needed == 'true'
+        if: steps.claim.outputs.claimed == 'true'
         id: hs-tag
         shell: bash
         run: |
@@ -308,7 +328,7 @@ jobs:
           echo "next_tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Push main and release tag
-        if: steps.resolve.outputs.update_needed == 'true'
+        if: steps.claim.outputs.claimed == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -319,7 +339,7 @@ jobs:
           git push origin "refs/tags/${NEXT_TAG}"
 
       - name: Summary
-        if: steps.resolve.outputs.update_needed == 'true'
+        if: steps.claim.outputs.claimed == 'true'
         run: |
           echo "Synced upstream ${{ steps.resolve.outputs.latest_tag }} into $BASE_BRANCH and created release tag ${{ steps.hs-tag.outputs.next_tag }}."
 

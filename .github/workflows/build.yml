@@ -45,6 +45,10 @@ permissions:
 jobs:
   build-windows-runtime:
     runs-on: windows-latest
+    timeout-minutes: 45
+    concurrency:
+      group: tgws-runtime-${{ inputs.ref || github.ref }}
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -93,6 +97,7 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: [build-windows-runtime]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
