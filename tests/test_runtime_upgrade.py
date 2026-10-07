@@ -1,10 +1,14 @@
 import copy
+import os
 import ssl
 import sys
 import unittest
 from unittest import mock
 
+import httpx
+
 from proxy import bridge, raw_websocket, tg_ws_proxy
+from proxy.cf_h2 import _HttpLane
 from proxy.config import proxy_config
 from proxy.pool import _CfWorkerPool
 
@@ -13,6 +17,24 @@ class RuntimeUpgradeTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         previous = copy.deepcopy(vars(proxy_config))
         self.addCleanup(lambda: vars(proxy_config).update(previous))
+
+    async def test_h2_dials_origin_directly_with_proxy_environment(self):
+        proxies = {name: 'http://vpn-proxy.invalid:3128'
+                   for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY',
+                                'http_proxy', 'https_proxy', 'all_proxy')}
+        proxies.update({'NO_PROXY': '', 'no_proxy': ''})
+        with mock.patch.dict(os.environ, proxies), \
+             mock.patch('proxy.h2_transport.asyncio.open_connection',
+                        new=mock.AsyncMock(side_effect=OSError('offline test'))) as dial:
+            lane = _HttpLane('kws2.example.org', 1)
+            try:
+                with self.assertRaises(httpx.ConnectError):
+                    await lane.client.get('https://kws2.example.org/api')
+                dial.assert_awaited_once()
+                self.assertEqual(dial.call_args.args, ('kws2.example.org', 443))
+                self.assertEqual(dial.call_args.kwargs['server_hostname'], 'kws2.example.org')
+            finally:
+                await lane.close()
 
     async def test_cold_worker_keeps_success_accounting_and_tls_mode(self):
         proxy_config.cfproxy_worker_domains = ['worker.example']

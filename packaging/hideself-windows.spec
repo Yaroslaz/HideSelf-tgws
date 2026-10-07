@@ -18,6 +18,8 @@ a = Analysis(
     binaries=[],
     datas=certifi_datas,
     hiddenimports=collect_submodules("proxy") + [
+        "httpx",
+        "h2",
         "cryptography.hazmat.primitives.ciphers",
         "cryptography.hazmat.primitives.ciphers.algorithms",
         "cryptography.hazmat.primitives.ciphers.modes",
