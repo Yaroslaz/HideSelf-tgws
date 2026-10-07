@@ -1,13 +1,13 @@
 {
   "upstream": "Flowseal/tg-ws-proxy",
-  "tag": "v1.10.4",
-  "title": "TG WS Proxy v1.10.4",
-  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.10.4",
-  "published_at": "2026-09-19T19:55:38Z",
-  "commit": "70b982d",
-  "body": "* Добавлен Certifi в качестве основной коллекции корневых сертификатов для TLS соединений\r",
+  "tag": "v1.11.1",
+  "title": "TG WS Proxy v1.11.1",
+  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.11.1",
+  "published_at": "2026-10-05T22:01:25Z",
+  "commit": "18175fb",
+  "body": "* Исправлена обработка ошибки 404 при мультиплексировании, из-за которой загрузка медии не продолжалась\r",
   "hideself_notes": [
-    "Синхронизировано с upstream v1.10.4.",
+    "Синхронизировано с upstream v1.11.1.",
     "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
     "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
   ]
