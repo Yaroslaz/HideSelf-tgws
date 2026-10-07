@@ -72,7 +72,7 @@ class _Balancer:
         self._dc_to_domain[dc_id] = domain
         return True
 
-    def get_domains_for_dc(self, dc_id: int) -> Iterator[str]:
+    def get_domains_for_dc(self, dc_id: int, *, reserve_unproven: bool = True) -> Iterator[str]:
         current_domain = self._dc_to_domain.get(dc_id)
 
         # Proven fronts before unproven ones: MAX_ATTEMPTS is small, and a
@@ -99,7 +99,7 @@ class _Balancer:
             if self._unavailable_until.get(domain, 0.0) > now:
                 continue
             attempts += 1
-            if domain not in self._healthy:
+            if reserve_unproven and domain not in self._healthy:
                 self._unavailable_until[domain] = now + self.IN_FLIGHT_HOLD
             yield domain
 

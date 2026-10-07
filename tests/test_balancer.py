@@ -69,6 +69,15 @@ class BalancerBreakerTest(unittest.TestCase):
         concurrent = self._sweep_whole_pool(2)
         self.assertTrue(set(in_flight).isdisjoint(concurrent))
 
+    def test_multiplexed_selection_keeps_failed_fronts_on_cooldown(self):
+        first = next(self.balancer.get_domains_for_dc(2, reserve_unproven=False))
+        concurrent = next(self.balancer.get_domains_for_dc(2, reserve_unproven=False))
+        self.assertEqual(first, concurrent)
+        self.balancer.report_failure(first)
+        self.assertNotIn(first, list(self.balancer.get_domains_for_dc(2, reserve_unproven=False)))
+        self.assertEqual(len(list(self.balancer.get_domains_for_dc(2, reserve_unproven=False))),
+                         self.balancer.MAX_ATTEMPTS)
+
     def test_the_in_flight_hold_expires_on_its_own(self):
         # Nothing reports the outcome here, standing in for a cancelled task:
         # the front has to come back without anyone releasing it.
