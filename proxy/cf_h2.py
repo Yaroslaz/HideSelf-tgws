@@ -873,7 +873,10 @@ class CfH2Pool:
         if dc not in DC_DEFAULT_IPS:
             log.warning('[%s] H2 unsupported DC%d -> existing WS route', label, dc)
             return None
-        for base_domain in balancer.get_domains_for_dc(dc):
+        # H2 serializes setup per host and shares the resulting lane. A WS
+        # in-flight reservation would reject concurrent users of that lane.
+        # Keep the balancer's failure cooldowns and attempt limit in effect.
+        for base_domain in balancer.get_domains_for_dc(dc, reserve_unproven=False):
             host = 'kws%d.%s' % (dc, base_domain)
             async with self.locks.setdefault(host, asyncio.Lock()):
                 if self.closed:
