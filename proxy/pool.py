@@ -14,6 +14,15 @@ from .utils import ws_domains, DC_DEFAULT_IPS, WS_PATH, WS_PATH_TEST
 
 log = logging.getLogger('tg-mtproto-proxy')
 
+# WSAENETUNREACH, ERROR_NETWORK_UNREACHABLE: no route on this host at all.
+_LOCAL_NETWORK_WINERRORS = {10051, 1231}
+
+
+def _is_local_abort(exc: BaseException) -> bool:
+    if isinstance(exc, ConnectionAbortedError):
+        return True
+    return getattr(exc, 'winerror', None) in _LOCAL_NETWORK_WINERRORS
+
 
 class _WsPool:
     WS_POOL_MAX_AGE = 120.0
@@ -246,6 +255,9 @@ class _CfWorkerPool:
     QUOTA_COOLDOWN = 900.0
     COOLDOWN_MAX = 21600.0
     BACKOFF_STEPS = 8
+    # Long enough for a TUN adapter or route change to settle, short enough
+    # that a healthy worker is back before Telegram's next reconnect.
+    LOCAL_ABORT_COOLDOWN = 5.0
     # Refill backoff, in the shape _WsPool already uses: without it, refilling
     # on a miss would dial a dead worker once per client fallback.
     REFILL_BACKOFF_INITIAL = 60.0
@@ -386,12 +398,31 @@ class _CfWorkerPool:
         """
         quota = isinstance(exc, WsHandshakeError) and exc.status_code == 429
         base = self.QUOTA_COOLDOWN if quota else self.FAILURE_COOLDOWN
+        now = time.monotonic()
+        resting_until = self._unavailable_until.get(worker_domain, 0)
+
+        # The host's own network dropped the dial (TUN coming up, adapter
+        # switch): Windows reports it as ConnectionAbortedError, "aborted by
+        # the local system". That says nothing about the worker, so it gets a
+        # short pause and no step up the ladder.
+        if _is_local_abort(exc):
+            until = max(resting_until, now + self.LOCAL_ABORT_COOLDOWN)
+            self._unavailable_until[worker_domain] = until
+            return until - now
+
+        # Dials already in flight when the first one failed land here one
+        # after another. Each used to double the rest: one network blip with
+        # 13 parallel dials put the only worker aside for 960s within the same
+        # second, and Telegram spent those minutes on "no fallback available".
+        # A refusal while already resting is the same outage, not a new one.
+        if not quota and resting_until > now:
+            return resting_until - now
 
         failures = min(self._failures.get(worker_domain, 0) + 1,
                        self.BACKOFF_STEPS)
         self._failures[worker_domain] = failures
         cooldown = min(base * (2 ** (failures - 1)), self.COOLDOWN_MAX)
-        self._unavailable_until[worker_domain] = time.monotonic() + cooldown
+        self._unavailable_until[worker_domain] = now + cooldown
 
         if quota:
             log.warning("CF worker %s reached its request limit, "
