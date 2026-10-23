@@ -182,12 +182,55 @@ class CfWorkerPoolTest(unittest.TestCase):
         self.assertIn(self.workers[0], self.pool.available_domains(self.workers))
 
     def test_the_cooldown_ladder_is_bounded(self):
-        ladder = [self.pool.report_failure(self.workers[0], TimeoutError())
-                  for _ in range(40)]
+        ladder = []
+        for _ in range(40):
+            ladder.append(
+                self.pool.report_failure(self.workers[0], TimeoutError()))
+            self.clock.now += ladder[-1] + 1
         self.assertEqual(ladder[0], self.pool.FAILURE_COOLDOWN)
+        self.assertEqual(ladder[1], self.pool.FAILURE_COOLDOWN * 2)
         self.assertLessEqual(max(ladder), self.pool.COOLDOWN_MAX)
         self.assertLessEqual(self.pool._failures[self.workers[0]],
                              self.pool.BACKOFF_STEPS)
+
+    def test_a_burst_of_in_flight_failures_counts_once(self):
+        # 13 parallel dials failing in the same second used to climb the
+        # ladder to 960s; it is one outage and earns one step.
+        rests = [self.pool.report_failure(self.workers[0], TimeoutError())
+                 for _ in range(13)]
+        self.assertEqual(max(rests), self.pool.FAILURE_COOLDOWN)
+        self.assertEqual(self.pool._failures[self.workers[0]], 1)
+
+    def test_the_ladder_still_climbs_across_separate_outages(self):
+        first = self.pool.report_failure(self.workers[0], TimeoutError())
+        self.clock.now += first + 1
+        second = self.pool.report_failure(self.workers[0], TimeoutError())
+        self.assertEqual(second, self.pool.FAILURE_COOLDOWN * 2)
+
+    def test_a_local_abort_is_not_held_against_the_worker(self):
+        abort = ConnectionAbortedError(
+            22, 'The network connection was aborted by the local system',
+            None, 1236, None)
+        rests = [self.pool.report_failure(self.workers[0], abort)
+                 for _ in range(13)]
+        self.assertEqual(max(rests), self.pool.LOCAL_ABORT_COOLDOWN)
+        self.assertNotIn(self.workers[0], self.pool._failures)
+        self.clock.now += self.pool.LOCAL_ABORT_COOLDOWN + 1
+        self.assertIn(self.workers[0],
+                      self.pool.available_domains(self.workers))
+
+    def test_a_local_abort_does_not_shorten_a_real_rest(self):
+        real = self.pool.report_failure(self.workers[0], TimeoutError())
+        rest = self.pool.report_failure(self.workers[0],
+                                        ConnectionAbortedError())
+        self.assertEqual(rest, real)
+
+    def test_a_quota_refusal_escalates_even_while_resting(self):
+        self.pool.report_failure(self.workers[0], TimeoutError())
+        quota = WsHandshakeError(429, '429 Too Many Requests')
+        with self.assertLogs(pool_module.log, 'WARNING'):
+            rest = self.pool.report_failure(self.workers[0], quota)
+        self.assertGreaterEqual(rest, self.pool.QUOTA_COOLDOWN)
 
     def test_reset_clears_the_breaker(self):
         self._get(self._refusing())
