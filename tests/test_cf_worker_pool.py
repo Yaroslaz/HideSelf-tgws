@@ -232,9 +232,44 @@ class CfWorkerPoolTest(unittest.TestCase):
             rest = self.pool.report_failure(self.workers[0], quota)
         self.assertGreaterEqual(rest, self.pool.QUOTA_COOLDOWN)
 
+    def test_a_refill_overtaken_by_reset_keeps_out_of_the_pool(self):
+        # v1.11.2 made reset() cancel the refill in flight. Merged into our
+        # refill loop, the cancelled dial must leave nothing behind: no socket
+        # in the pool and no refill backoff charged to the new run.
+        dialled = []
+
+        async def _run():
+            gate = asyncio.Event()
+
+            async def slow_connect(*_args):
+                await gate.wait()
+                ws = _FakeWs()
+                dialled.append(ws)
+                return ws, self.workers[0]
+
+            with mock.patch.object(self.pool, '_connect_one', slow_connect):
+                self.assertIsNone(
+                    await self.pool.get(self.DC, self.DST, self.workers))
+                await asyncio.sleep(0)
+                self.pool.reset()
+                gate.set()
+                await _settle()
+
+        asyncio.run(_run())
+        self.assertEqual(dialled, [])
+        self.assertFalse(self.pool._idle.get(self.DC))
+        self.assertEqual(self.pool._refilling, {})
+        self.assertNotIn(self.DC, self.pool._refill_after)
+
     def test_reset_clears_the_breaker(self):
         self._get(self._refusing())
-        self.pool.reset()
+
+        # Since v1.11.2 reset() cancels in-flight refills on the running loop,
+        # so it is only ever called from inside one — as _run() does.
+        async def _reset():
+            self.pool.reset()
+
+        asyncio.run(_reset())
         self.assertEqual(self.pool._unavailable_until, {})
         self.assertEqual(self.pool._failures, {})
         self.assertEqual(self.pool._refill_failures, {})

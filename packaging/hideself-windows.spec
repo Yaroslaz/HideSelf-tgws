@@ -6,10 +6,12 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 block_cipher = None
 repo_root = os.path.abspath(os.path.join(os.path.dirname(SPEC), os.pardir))
 
-# proxy/utils.py pins the TLS trust store to certifi.where(), so the CA bundle
-# has to travel inside the frozen exe; otherwise the CF proxy domain refresh
-# silently falls back to the built-in list. Upstream added the same line to the
-# windows/linux/macos specs in v1.10.0 — keep this one in step.
+# proxy/utils.py pins the TLS trust store to the certifi bundle, so it has to
+# travel inside the frozen exe; otherwise the CF proxy domain refresh silently
+# falls back to the built-in list. Since v1.11.2 the frozen build reads it from
+# exactly <_MEIPASS>/certifi/cacert.pem — the path collect_data_files gives it.
+# Upstream added the same line to the windows/linux/macos specs in v1.10.0 —
+# keep this one in step.
 certifi_datas = collect_data_files('certifi')
 
 a = Analysis(
