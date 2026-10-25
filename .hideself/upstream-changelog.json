@@ -9,6 +9,7 @@
   "hideself_notes": [
     "Синхронизировано с upstream v1.10.0.",
     "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
-    "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
+    "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах.",
+    "Сборка hs.22: предохранитель на переборе фронтов CFProxy: мёртвый пул больше не даёт тысячи дозвонов в минуту и не выедает эфемерные порты в стеке TUN."
   ]
 }
