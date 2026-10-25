@@ -160,7 +160,12 @@ class _Connection:
             self.fail(httpx.ReadError('H2 reader stopped'))
             raise
         except (OSError, H2Error, httpx.HTTPError) as exc:
-            error = exc if isinstance(exc, httpx.HTTPError) else httpx.RemoteProtocolError(str(exc))
+            if isinstance(exc, httpx.HTTPError):
+                error = exc
+            elif isinstance(exc, OSError):
+                error = httpx.ReadError(str(exc))
+            else:
+                error = httpx.RemoteProtocolError(str(exc))
             self.fail(error)
 
     def check_error(self):

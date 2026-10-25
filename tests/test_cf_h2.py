@@ -4,7 +4,7 @@ import struct
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -791,6 +791,38 @@ class HttpMultiplexTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 recovery.cancel()
                 await asyncio.gather(recovery, return_exceptions=True)
+
+    async def test_lane_transport_failure_notifies_pool_and_selects_ws(self):
+        pool = CfH2Pool()
+        try:
+            with patch('proxy.cf_h2.balancer.get_domains_for_dc', return_value=['example.org']), \
+                    patch('proxy.cf_h2.balancer.update_domain_for_dc'), \
+                    patch.object(_HttpLane, '_preflight', new_callable=AsyncMock):
+                channel = await pool.open(2, 'network-timeout')
+            await channel.lane.client.aclose()
+            def unavailable(request):
+                raise httpx.ReadError('[WinError 121] timeout', request=request)
+            channel.lane.client = httpx.AsyncClient(transport=httpx.MockTransport(unavailable))
+            with self.assertRaises(httpx.ReadError):
+                await channel.lane._post(b'x' * 40, channel.channel_id)
+            self.assertGreater(pool.setup_retry_after[2], time.monotonic())
+            self.assertIsNone(await pool.open(2, 'native-reconnect'))
+        finally:
+            await pool.close()
+
+    async def test_transport_failure_uses_ws_then_reopens_only_the_affected_dc(self):
+        pool = CfH2Pool()
+        with self.assertLogs('tg-mtproto-proxy', level='WARNING') as captured:
+            for _ in range(7):
+                pool._transport_failed(2, httpx.ReadError('[WinError 121] timeout'))
+        self.assertEqual(len(captured.records), 1)
+        with patch.object(pool, '_open', new_callable=AsyncMock, return_value='healthy') as opened:
+            self.assertIsNone(await pool.open(2, 'reconnect'))
+            opened.assert_not_called()
+            self.assertEqual(await pool.open(4, 'other-dc'), 'healthy')
+            pool.setup_retry_after[2] = time.monotonic() - 1
+            self.assertEqual(await pool.open(2, 'recovered'), 'healthy')
+        await pool.close()
 
     async def test_closed_pool_cannot_open_new_channels(self):
         pool = CfH2Pool()

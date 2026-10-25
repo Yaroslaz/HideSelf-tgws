@@ -660,6 +660,10 @@ def main():
     root = logging.getLogger()
     root.setLevel(log_level)
 
+    # Pipes on Windows otherwise inherit the ANSI code page, while the client
+    # and the UTF-8 log file expect UTF-8. Frozen GUI builds can have no stderr.
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace')
     console = logging.StreamHandler()
     console.setFormatter(log_fmt)
     console.addFilter(DomainCensorFilter())

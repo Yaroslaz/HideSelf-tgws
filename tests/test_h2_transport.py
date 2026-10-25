@@ -19,7 +19,7 @@ from h2.connection import H2Connection
 from h2.events import DataReceived, RequestReceived, StreamEnded, StreamReset
 from h2.settings import SettingCodes
 
-from proxy.h2_transport import H2Transport, STREAM_RECEIVE_WINDOW, _Connection
+from proxy.h2_transport import H2Transport, STREAM_RECEIVE_WINDOW, _Connection, _ResponseStream
 from proxy.cf_h2 import _HttpChannel, _HttpLane, bridge_h2
 from proxy import tg_ws_proxy
 from proxy._aes import Cipher, algorithms, modes
@@ -1043,6 +1043,23 @@ class H2WireTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('reset: 2', failures[0].getMessage())
         self.assertIn('down=20', failures[0].getMessage())
         self.assertIn('sid=1', failures[0].getMessage())
+
+    async def test_windows_io_timeout_is_read_error_for_all_shared_streams(self):
+        closed = []
+        reader = SimpleNamespace(read=AsyncMock(side_effect=OSError(121, 'Windows I/O timeout')))
+        writer = SimpleNamespace(write=lambda _: None, close=lambda: closed.append(True),
+                                 wait_closed=AsyncMock())
+        connection = _Connection(reader, writer, 64, 1)
+        streams = [_ResponseStream(connection, sid, 1) for sid in (1, 3, 5)]
+        connection.streams = {stream.stream_id: stream for stream in streams}
+        await asyncio.wait_for(connection.reader_task, 1)
+        self.assertIsInstance(connection.error, httpx.ReadError)
+        self.assertNotIsInstance(connection.error, httpx.RemoteProtocolError)
+        self.assertTrue(closed)
+        for stream in streams:
+            self.assertIs(stream.error, connection.error)
+            self.assertTrue(stream.changed.is_set())
+        await connection.aclose()
 
     async def test_connection_loss_fails_waiters_and_next_request_reconnects(self):
         tasks = [await self.post() for _ in range(3)]

@@ -604,6 +604,7 @@ class _HttpLane:
         self.host, self.lane_id = host, lane_id
         self.channels: Set[_HttpChannel] = set()
         self.failed_until = 0.0
+        self.on_transport_failure = None
         self.closed = False
         self.tcp_connections = self.requests = self.responses = self.errors = 0
         self.slow_headers = self.slow_bodies = self.replays = 0
@@ -782,9 +783,11 @@ class _HttpLane:
             raise
         except _ReplyBufferFull:
             raise
-        except (httpx.HTTPError, OSError, ValueError, BufferError):
+        except (httpx.HTTPError, OSError, ValueError, BufferError) as exc:
             self.errors += 1
             self.failed_until = time.monotonic() + DOMAIN_COOLDOWN
+            if self.on_transport_failure is not None and isinstance(exc, (httpx.TransportError, OSError)):
+                self.on_transport_failure(exc)
             raise
         finally:
             self.reply_buffer_bytes -= buffered
@@ -853,6 +856,15 @@ class CfH2Pool:
         self.next_lane = self.next_channel = 0
         self.closed = False
 
+    def _transport_failed(self, dc: int, error: Exception) -> None:
+        if self.closed:
+            return
+        now = time.monotonic()
+        if now >= self.setup_retry_after.get(dc, 0):
+            log.warning('H2 DC%d transport unavailable: %s; using WS for %.0fs',
+                        dc, type(error).__name__, DOMAIN_COOLDOWN)
+        self.setup_retry_after[dc] = now + DOMAIN_COOLDOWN
+
     async def open(self, dc: int, label: str) -> Optional[_HttpChannel]:
         if self.closed:
             raise ConnectionError('H2 pool closed')
@@ -888,6 +900,7 @@ class CfH2Pool:
                 if lane is None:
                     self.next_lane += 1
                     lane = _HttpLane(host, self.next_lane)
+                    lane.on_transport_failure = lambda error, dc=dc: self._transport_failed(dc, error)
                     try:
                         await lane._preflight()
                     except (httpx.HTTPError, OSError, ValueError) as exc:
