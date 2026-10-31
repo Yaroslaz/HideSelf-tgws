@@ -1,24 +1,22 @@
-# Upstream Changelog (v1.11.2)
+# Upstream Changelog (v1.11.3)
 
-**Title:** TG WS Proxy v1.11.2
+**Title:** TG WS Proxy v1.11.3
 
-**Source:** https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.11.2
+**Source:** https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.11.3
 
-**Published at:** 2026-10-11T17:01:53Z
+**Published at:** 2026-10-30T16:05:45Z
 
 ## Upstream Notes
 
-* Различные оптимизации и улучшение мультиплексирования
-* Добавлена ручная проверка обновления, если автоматическая проверка выключена
-* Добавлено авто-обновление на Linux by @Fgeeha in https://github.com/Flowseal/tg-ws-proxy/pull/1223
-* Исправления CF-worker pool, актуализация документации by @holdingq0 in https://github.com/Flowseal/tg-ws-proxy/pull/1411
-* Исправление некоторых переводов by @Fallout-rtg in https://github.com/Flowseal/tg-ws-proxy/pull/1419
-* Исправлены комбинации клавиш (Ctrl+C/V/A) на других раскладках
+* TLS соединение больше не будет создаваться с `X25519MLKEM768`, который создавал слишком большой ClientHello, который в свою очередь мог спровоцировать триггер DPI (из-за чего могли быть ошибки TimeoutError)
+  * **Несовместимо с некоторыми ОС. Используйте пока что v1.11.2; правка совместимости будет в следующем обновлении**
+* Добавлена поддержка --no-secure для Docker by @partoftheworlD in https://github.com/Flowseal/tg-ws-proxy/pull/1493
+* Улучшения Fake TLS by @someden in https://github.com/Flowseal/tg-ws-proxy/pull/1473
 
 ## HideSelf Adaptation
 
-- Синхронизировано с upstream тегом `v1.11.2`.
+- Синхронизировано с upstream тегом `v1.11.3`.
 - Формат релиза HideSelf runtime не меняется: публикуется managed Windows binary `hideself-tgws_windows.exe`.
 - При merge-конфликте для fork-owned файлов сохраняется версия HideSelf (`.github/workflows/build.yml`, `docs/README.md`).
 
-<!--hs-upstream tag=v1.11.2 commit=307a384-->
+<!--hs-upstream tag=v1.11.3 commit=73aa394-->
