@@ -280,13 +280,14 @@ class ElevatedBinaryReplacementTest(unittest.TestCase):
             directory = Path(tmp)
             exe = directory / 'app $(touch unwanted); тест'
             src = directory / 'download with spaces'
-            shutil.copy2(shutil.which('sleep'), exe)
+            # ubuntu-latest switched to the multi-call uutils coreutils: a copy
+            # of sleep under this name exits at once with "coreutils: unknown
+            # program", even with argv[0] = 'sleep'. dash is a standalone
+            # binary that does not care what it is called; the loop keeps it
+            # (not a tail-exec'd sleep) as the running image of the file.
+            shutil.copy2(shutil.which('dash') or shutil.which('sh'), exe)
             src.write_bytes(b'new')
-            # ubuntu-latest switched to the multi-call uutils coreutils, which
-            # picks the tool by argv[0] and rejects the odd file name
-            # ("coreutils: unknown program"). Keep argv[0] = 'sleep' and still
-            # run the copy, so the file being replaced stays a live executable.
-            process = subprocess.Popen(['sleep', '30'], executable=str(exe))
+            process = subprocess.Popen([str(exe), '-c', 'while :; do sleep 1; done'])
             try:
                 with mock.patch.object(linux_update, '_is_root', return_value=True):
                     cmd = linux_update.replace_binary_cmd(src, exe)
