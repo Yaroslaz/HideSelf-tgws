@@ -28,9 +28,19 @@ class _FakeWriter:
         self.transport = _FakeTransport()
 
 
+class _FakeReader:
+    # v1.11.4 also treats a socket the peer has closed as stale.
+    def at_eof(self):
+        return False
+
+    def exception(self):
+        return None
+
+
 class _FakeWs:
     def __init__(self):
         self._closed = False
+        self.reader = _FakeReader()
         self.writer = _FakeWriter()
 
     async def close(self):
@@ -63,6 +73,13 @@ class CfWorkerPoolTest(unittest.TestCase):
         self.addCleanup(setattr, proxy_config, 'pool_size', previous)
 
         self.pool = _CfWorkerPool()
+        # v1.11.4 added a rotation loop that lives as long as the pool. These
+        # tests step a fake clock and wait for every task to finish, so the
+        # loop is taken out here; its interplay with the breaker has its own
+        # test below.
+        rotation = mock.patch.object(self.pool, '_schedule_rotation')
+        rotation.start()
+        self.addCleanup(rotation.stop)
         self.workers = ['w1.example', 'w2.example']
         self.dials = 0
 
@@ -260,6 +277,32 @@ class CfWorkerPoolTest(unittest.TestCase):
         self.assertFalse(self.pool._idle.get(self.DC))
         self.assertEqual(self.pool._refilling, {})
         self.assertNotIn(self.DC, self.pool._refill_after)
+
+    def test_rotation_does_not_dial_resting_workers(self):
+        # The rotation loop asks for a refill every few seconds while the pool
+        # is short. With every worker resting that must stay a no-op: no dial
+        # and no refill backoff charged, or the loop would turn the breaker
+        # back into a dial per tick.
+        for worker in self.workers:
+            self.pool.report_failure(worker, TimeoutError())
+
+        async def _run():
+            # The fake clock stands still, so the workers stay resting while
+            # the loop really ticks a few dozen times.
+            self.pool.WS_POOL_CHECK_INTERVAL = 0.001
+            self.pool._connect_one = self._serving()
+            _CfWorkerPool._schedule_rotation(
+                self.pool, self.DC, self.DST, self.workers)
+            await asyncio.sleep(0.05)
+            ticking = list(self.pool._rotating.values())
+            self.assertTrue(ticking and not ticking[0].done())
+            for task in ticking + list(self.pool._refilling.values()):
+                task.cancel()
+            await asyncio.gather(*ticking, return_exceptions=True)
+
+        asyncio.run(_run())
+        self.assertEqual(self.dials, 0)
+        self.assertNotIn(self.DC, self.pool._refill_failures)
 
     def test_reset_clears_the_breaker(self):
         self._get(self._refusing())
