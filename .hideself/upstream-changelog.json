@@ -1,13 +1,13 @@
 {
   "upstream": "Flowseal/tg-ws-proxy",
-  "tag": "v1.11.3",
-  "title": "TG WS Proxy v1.11.3",
-  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.11.3",
-  "published_at": "2026-10-30T16:05:45Z",
-  "commit": "73aa394",
-  "body": "* TLS соединение больше не будет создаваться с `X25519MLKEM768`, который создавал слишком большой ClientHello, который в свою очередь мог спровоцировать триггер DPI (из-за чего могли быть ошибки TimeoutError)\r\n  * **Несовместимо с некоторыми ОС. Используйте пока что v1.11.2; правка совместимости будет в следующем обновлении**\r\n* Добавлена поддержка --no-secure для Docker by @partoftheworlD in https://github.com/Flowseal/tg-ws-proxy/pull/1493\r\n* Улучшения Fake TLS by @someden in https://github.com/Flowseal/tg-ws-proxy/pull/1473\r",
+  "tag": "v1.11.4",
+  "title": "TG WS Proxy v1.11.4",
+  "url": "https://github.com/Flowseal/tg-ws-proxy/releases/tag/v1.11.4",
+  "published_at": "2026-11-01T11:27:41Z",
+  "commit": "2085861",
+  "body": "- Исправление совместимости с другими ОС\r\n- Различные улучшения и исправления\r",
   "hideself_notes": [
-    "Синхронизировано с upstream v1.11.3.",
+    "Синхронизировано с upstream v1.11.4.",
     "В HideSelf сохраняется формат runtime-сборки: только managed Windows binary (hideself-tgws_windows.exe).",
     "Кастомные файлы форка (build workflow и docs/README) сохраняются при конфликтах."
   ]
