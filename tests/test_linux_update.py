@@ -282,7 +282,11 @@ class ElevatedBinaryReplacementTest(unittest.TestCase):
             src = directory / 'download with spaces'
             shutil.copy2(shutil.which('sleep'), exe)
             src.write_bytes(b'new')
-            process = subprocess.Popen([str(exe), '30'])
+            # ubuntu-latest switched to the multi-call uutils coreutils, which
+            # picks the tool by argv[0] and rejects the odd file name
+            # ("coreutils: unknown program"). Keep argv[0] = 'sleep' and still
+            # run the copy, so the file being replaced stays a live executable.
+            process = subprocess.Popen(['sleep', '30'], executable=str(exe))
             try:
                 with mock.patch.object(linux_update, '_is_root', return_value=True):
                     cmd = linux_update.replace_binary_cmd(src, exe)
