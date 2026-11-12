@@ -109,6 +109,25 @@ jobs:
           MANUAL_RETRY: ${{ github.event_name == 'workflow_dispatch' && inputs.retry_failed }}
         run: python scripts/claim-sync-attempt.py
 
+      # Попытка на эту версию уже была и не дошла до релиза, а main всё ещё
+      # позади апстрима. Раньше здесь был зелёный no-op: синк v1.11.4 упал
+      # 2026-11-02 на конфликте в proxy/pool.py, и одиннадцать дней каждый
+      # ночной запуск честно светился зелёным, ничего не делая. Красный запуск
+      # каждую ночь — ровно то напоминание, которого тогда не хватило.
+      - name: Fail while the previous attempt is stuck
+        if: steps.resolve.outputs.update_needed == 'true' && steps.claim.outputs.claimed != 'true'
+        env:
+          UPSTREAM_TAG: ${{ steps.resolve.outputs.latest_tag }}
+          MERGE_NEEDED: ${{ steps.resolve.outputs.merge_needed }}
+        run: |
+          if [ "$MERGE_NEEDED" = "true" ]; then
+            WHAT="main is still behind upstream ${UPSTREAM_TAG}"
+          else
+            WHAT="${UPSTREAM_TAG} is merged but no HideSelf release tag contains it"
+          fi
+          echo "::error title=Upstream sync is stuck::${WHAT}; the earlier attempt for this version failed. Merge it by hand (merge commit, not squash), then run this workflow with retry_failed: true."
+          exit 1
+
       - name: Prepare main for validation and release
         if: steps.claim.outputs.claimed == 'true'
         run: git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
@@ -236,6 +255,16 @@ jobs:
           UPSTREAM_SHA=$(git rev-parse --short "${{ steps.resolve.outputs.tag_sha }}")
           mkdir -p .hideself
 
+          # Апстрим иногда держит исправления в main без тега (так hs.30 взял
+          # Fake TLS #1532 поверх v1.11.4). Метка ниже по-прежнему называет
+          # тег — клиент сравнивает возможности по нему, — а сами коммиты
+          # перечисляются в заметках, чтобы сборка не выдавала себя за чистый тег.
+          AHEAD=""
+          if git rev-parse --verify -q upstream/main >/dev/null; then
+            UPSTREAM_BASE=$(git merge-base HEAD upstream/main)
+            AHEAD=$(git log --no-merges --format='- `%h` %s' "${LATEST_TAG}..${UPSTREAM_BASE}" || true)
+          fi
+
           RELEASE_JSON=$(gh api "repos/Flowseal/tg-ws-proxy/releases/tags/${LATEST_TAG}" || true)
           if [ -n "${RELEASE_JSON:-}" ]; then
             RELEASE_TITLE=$(echo "$RELEASE_JSON" | jq -r '.name // empty')
@@ -300,6 +329,12 @@ jobs:
             echo
             echo "$RELEASE_BODY"
             echo
+            if [ -n "$AHEAD" ]; then
+              echo "## Upstream main after ${LATEST_TAG}"
+              echo
+              echo "$AHEAD"
+              echo
+            fi
             echo "## HideSelf Adaptation"
             echo
             echo "- Синхронизировано с upstream тегом \`${LATEST_TAG}\`."
