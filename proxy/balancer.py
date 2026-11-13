@@ -33,6 +33,19 @@ class _Balancer:
     # method (CF worker, plain TCP) take over. The pool still gets
     # explored, across fallbacks rather than within one.
     MAX_ATTEMPTS = 3
+    # A front that answered with an HTTP overload status (503 and friends)
+    # sits out only this long, and the answer does not climb the ladder.
+    # Live capture, 2026-11-13, from a Russian ISP: every front of the pool
+    # landed on Cloudflare HEL, which answered 503 with an empty body to
+    # about 85% of WebSocket handshakes -- per attempt, not per zone: the same
+    # host gave 101 and 503 back to back, and 6 of 28 Cloudflare addresses
+    # tried for one zone in a row answered 101. Benching a front for a minute
+    # on such an answer emptied the 20-front pool within seconds ("every front
+    # on cooldown" 3356 times in one afternoon) while a retry had the same
+    # one-in-six chance as the first dial. The hold only keeps the very next
+    # dial of the same fallback on another front.
+    OVERLOAD_HOLD = 2.0
+    OVERLOAD_STATUSES = frozenset((429, 502, 503, 504))
 
     def __init__(self):
         self.domains: List[str] = []
@@ -117,6 +130,27 @@ class _Balancer:
         self._benched_until.pop(domain, None)
         self._failures.pop(domain, None)
         self._healthy.add(domain)
+
+    def report_overload(self, domain: str) -> float:
+        """Hold a front that refused one attempt with an overload answer.
+
+        Unlike `report_failure` this neither benches the front nor counts a
+        failure: the edge answered, so the host is reachable and the zone is
+        configured, and the next attempt is as good as the first one.
+        """
+        now = time.monotonic()
+        # Replaces the in-flight hold rather than extending it: the dial it
+        # covered is over, and keeping the front out for the rest of those
+        # 12s let a burst of concurrent fallbacks drain the pool again. A real
+        # bench from an earlier failure is left as it is.
+        until = max(self._benched_until.get(domain, 0.0),
+                    now + self.OVERLOAD_HOLD)
+        self._unavailable_until[domain] = until
+        return until - now
+
+    @classmethod
+    def is_overload(cls, exc: BaseException) -> bool:
+        return getattr(exc, 'status_code', None) in cls.OVERLOAD_STATUSES
 
     def report_failure(self, domain: str) -> float:
         """Put a failed front on cooldown and say for how long."""
