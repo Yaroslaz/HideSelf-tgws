@@ -243,6 +243,73 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
     return True
 
 
+# Dials one fallback may spend on fronts that answer with an overload status.
+# Live run of this code on 2026-11-13 against the real pool from the affected
+# ISP: nine dials connected 13 of 20 fallbacks, in 0.3-3.8s. Twelve (four
+# rounds of three) bring the one-in-six odds to about 85% for at most a few
+# more seconds of setup; Telegram retries the rest itself. More would trade
+# seconds for a burst of handshakes that the breaker comment in balancer.py
+# warns about.
+CF_OVERLOAD_ATTEMPTS = 12
+# Fronts dialled at once within a round. The first 101 wins; a dead-slow
+# front no longer holds the fallback for its whole 10s connect timeout.
+CF_RACE_WIDTH = 3
+CF_CONNECT_TIMEOUT = 10.0
+
+
+async def _race_fronts(domains: List[str], dc: int):
+    """Dial `kws{dc}.<front>` for every front at once.
+
+    Returns `(ws, base_domain, failures)`: the first socket that completed the
+    handshake (the others are cancelled or closed) and the exceptions of the
+    dials that failed before it, as `(base_domain, exc)` pairs.
+    """
+    async def dial(base_domain):
+        domain = f'kws{dc}.{base_domain}'
+        ws = await RawWebSocket.connect(domain, domain, timeout=CF_CONNECT_TIMEOUT,
+                                        secure=not proxy_config.disable_secure)
+        return ws, base_domain
+
+    tasks = {asyncio.ensure_future(dial(d)): d for d in domains}
+    failures = []
+    winner = None
+    try:
+        pending = set(tasks)
+        while pending and winner is None:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                exc = task.exception()
+                if exc is not None:
+                    failures.append((tasks[task], exc))
+                elif winner is None:
+                    winner = task.result()
+                else:
+                    # Two fronts answered in the same tick: keep one.
+                    asyncio.ensure_future(_quiet_close(task.result()[0]))
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+                task.add_done_callback(_close_late_winner)
+    if winner is None:
+        return None, None, failures
+    return winner[0], winner[1], failures
+
+
+def _close_late_winner(task: 'asyncio.Future') -> None:
+    if task.cancelled() or task.exception() is not None:
+        return
+    asyncio.ensure_future(_quiet_close(task.result()[0]))
+
+
+async def _quiet_close(ws) -> None:
+    try:
+        await ws.close()
+    except Exception:
+        pass
+
+
 async def _cfproxy_fallback(reader, writer, relay_init, label,
                             ctx: CryptoCtx,
                             dc: int, is_media: bool,
@@ -253,25 +320,34 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
     tried = 0
     connect_started = time.monotonic()
 
-    for base_domain in balancer.get_domains_for_dc(dc):
+    while ws is None:
+        round_domains = list(balancer.get_domains_for_dc(dc))[:CF_RACE_WIDTH]
+        if not round_domains:
+            break
         # Announced from inside the loop: with every front on cooldown the
         # balancer yields nothing, and a bare "trying CF proxy" followed by
         # silence read like a hang rather than a deliberate skip.
         if not tried:
             log.info("[%s] DC%d%s -> trying CF proxy",
                      label, dc, media_tag)
-        tried += 1
-        domain = f'kws{dc}.{base_domain}'
-        try:
-            ws = await RawWebSocket.connect(domain, domain, timeout=10.0,
-                                            secure=not proxy_config.disable_secure)
-            chosen_domain = base_domain
+        tried += len(round_domains)
+        ws, chosen_domain, failures = await _race_fronts(round_domains, dc)
+        overloaded_only = bool(failures)
+        for base_domain, exc in failures:
+            if balancer.is_overload(exc):
+                hold = balancer.report_overload(base_domain)
+                log.info("[%s] DC%d%s CF proxy busy: %r (%s, next try in %.0fs)",
+                         label, dc, media_tag, exc, base_domain, hold)
+            else:
+                overloaded_only = False
+                cooldown = balancer.report_failure(base_domain)
+                log.warning("[%s] DC%d%s CF proxy failed: %s (%s out for %ds)",
+                            label, dc, media_tag, repr(exc),
+                            base_domain, int(cooldown))
+        # Another round only while the fronts say "busy": a front that is down
+        # stays a reason to hand over to the next method, as before.
+        if ws is None and (not overloaded_only or tried >= CF_OVERLOAD_ATTEMPTS):
             break
-        except Exception as exc:
-            cooldown = balancer.report_failure(base_domain)
-            log.warning("[%s] DC%d%s CF proxy failed: %s (%s out for %ds)",
-                        label, dc, media_tag, repr(exc),
-                        base_domain, int(cooldown))
 
     if ws is None:
         if not tried:
@@ -279,8 +355,9 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
                      label, dc, media_tag)
         return False
 
-    log.debug('[%s] WS CONNECT DC%d%s route=cf setup_ms=%.0f',
-              label, dc, media_tag, (time.monotonic() - connect_started) * 1000)
+    log.debug('[%s] WS CONNECT DC%d%s route=cf setup_ms=%.0f tries=%d',
+              label, dc, media_tag, (time.monotonic() - connect_started) * 1000,
+              tried)
     if chosen_domain:
         balancer.report_success(chosen_domain)
         if balancer.update_domain_for_dc(dc, chosen_domain):
