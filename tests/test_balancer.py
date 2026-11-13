@@ -44,9 +44,34 @@ class BalancerBreakerTest(unittest.TestCase):
 
     def test_cooldown_doubles_per_failure_and_is_capped(self):
         domain = self.domains[0]
-        ladder = [self.balancer.report_failure(domain) for _ in range(8)]
+        ladder = []
+        for _ in range(8):
+            ladder.append(self.balancer.report_failure(domain))
+            # The next failure comes from a dial made after the bench ended.
+            self.clock.now += ladder[-1] + 1
         self.assertEqual(ladder[:4], [60.0, 120.0, 240.0, 480.0])
         self.assertTrue(all(step == self.balancer.MAX_COOLDOWN for step in ladder[4:]))
+
+    def test_concurrent_failures_of_one_front_do_not_climb_the_ladder(self):
+        # Four fallbacks dialled the same front; Cloudflare answered 503 to
+        # each within a second (live hs.30 log, 2026-11-13 15:20:08).
+        domain = self.domains[0]
+        first = self.balancer.report_failure(domain)
+        self.clock.now += 0.3
+        rest = [self.balancer.report_failure(domain) for _ in range(3)]
+        self.assertEqual(first, self.balancer.FAILURE_COOLDOWN)
+        self.assertTrue(all(step <= first for step in rest))
+        self.assertEqual(self.balancer._failures[domain], 1)
+        # Once the bench is over, a new failure is a new step.
+        self.clock.now += first
+        self.assertEqual(self.balancer.report_failure(domain),
+                         2 * self.balancer.FAILURE_COOLDOWN)
+
+    def test_failure_ending_an_in_flight_hold_still_counts(self):
+        candidates = list(self.balancer.get_domains_for_dc(2))
+        unproven = candidates[0]
+        self.assertEqual(self.balancer.report_failure(unproven),
+                         self.balancer.FAILURE_COOLDOWN)
 
     def test_failure_counter_stays_bounded(self):
         domain = self.domains[0]

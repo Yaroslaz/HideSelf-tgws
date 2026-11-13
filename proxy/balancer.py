@@ -39,6 +39,11 @@ class _Balancer:
         self._dc_to_domain: Dict[int, str] = {}
         self._unavailable_until: Dict[str, float] = {}
         self._failures: Dict[str, int] = {}
+        # Until when a front sits out after a real failure. Kept apart from
+        # `_unavailable_until`, which also carries the short in-flight hold:
+        # a failure that ends an in-flight hold is news, one that lands while
+        # the front is already benched is the same outage reported again.
+        self._benched_until: Dict[str, float] = {}
         self._healthy: Set[str] = set()
 
     def update_domains_list(self, domains_list: List[str]) -> None:
@@ -61,6 +66,10 @@ class _Balancer:
         }
         self._failures = {
             domain: count for domain, count in self._failures.items()
+            if domain in known
+        }
+        self._benched_until = {
+            domain: until for domain, until in self._benched_until.items()
             if domain in known
         }
         self._healthy &= known
@@ -105,17 +114,33 @@ class _Balancer:
 
     def report_success(self, domain: str) -> None:
         self._unavailable_until.pop(domain, None)
+        self._benched_until.pop(domain, None)
         self._failures.pop(domain, None)
         self._healthy.add(domain)
 
     def report_failure(self, domain: str) -> float:
         """Put a failed front on cooldown and say for how long."""
         self._healthy.discard(domain)
+        now = time.monotonic()
+        # Dials already in flight when the first one failed land here one
+        # after another. The front that last worked is exempt from the
+        # in-flight hold, so every concurrent fallback dials it at once, and
+        # each failure used to double the bench: on 2026-11-13, right after a
+        # start, Cloudflare answered 503 to a burst and one front went
+        # 60 -> 120 -> 240 -> 480s within the same second, the whole pool was
+        # benched for up to ten minutes ("every front on cooldown"), and
+        # Telegram had nothing but a blocked direct TCP. Restarting the proxy
+        # was the only cure, because it was the only thing that forgot the
+        # ladder. Same rule as the CF worker breaker (pool.py).
+        benched_until = self._benched_until.get(domain, 0.0)
+        if benched_until > now:
+            return benched_until - now
         failures = min(self._failures.get(domain, 0) + 1, self.BACKOFF_STEPS)
         self._failures[domain] = failures
         cooldown = min(self.FAILURE_COOLDOWN * (2 ** (failures - 1)),
                        self.MAX_COOLDOWN)
-        self._unavailable_until[domain] = time.monotonic() + cooldown
+        self._unavailable_until[domain] = now + cooldown
+        self._benched_until[domain] = now + cooldown
         return cooldown
 
 
