@@ -7,9 +7,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 from proxy.config import proxy_config
-from proxy.pool import _CfWorkerPool, _WsPool
+from proxy.pool import FRONTING_SNI, _CfWorkerPool, _WsPool
 from proxy.raw_websocket import RawWebSocket, WsHandshakeError
-from proxy.utils import DC_DEFAULT_IPS, ws_domains
+from proxy.utils import DC_DEFAULT_IPS, ws_domains, ws_sni_alternatives
 
 
 class _StopRotation(Exception):
@@ -90,18 +90,93 @@ class WsPoolTest(unittest.IsolatedAsyncioTestCase):
                     'proxy.pool.RawWebSocket.connect',
                     side_effect=WsHandshakeError(302, 'redirect')) as connect:
                 self.assertIsNone(await self.pool._connect_one('192.0.2.1', ws_domains(dc, False)))
-                self.assertEqual([call.args[1] for call in connect.call_args_list],
-                                 [f'kws{dc}.web.telegram.org'] * 2)
+                hosts = {call.args[1] for call in connect.call_args_list}
+                self.assertEqual(hosts, {f'kws{dc}.web.telegram.org'})
 
-    async def test_media_tries_regular_domain_after_both_modes_fail(self):
+    async def test_media_tries_regular_domain_after_every_sni_fails(self):
+        media = 'kws2-1.web.telegram.org'
+        attempts = 2 + len(ws_sni_alternatives(media))
         for error in (asyncio.TimeoutError(), ConnectionResetError(),
                       WsHandshakeError(302, 'redirect'), WsHandshakeError(500, 'error')):
             with self.subTest(error=type(error)), mock.patch(
                     'proxy.pool.RawWebSocket.connect',
-                    side_effect=[error, error, _open_ws()]) as connect:
+                    side_effect=[error] * attempts + [_open_ws()]) as connect:
+                self.pool._preferred_sni.clear()
                 self.assertIsNotNone(await self.pool._connect_one('192.0.2.1', ws_domains(2, True)))
                 self.assertEqual([call.args[1] for call in connect.call_args_list],
-                                 ['kws2-1.web.telegram.org'] * 2 + ['kws2.web.telegram.org'])
+                                 [media] * attempts + ['kws2.web.telegram.org'])
+
+    async def test_own_name_and_front_come_before_substitute_names(self):
+        with mock.patch('proxy.pool.RawWebSocket.connect',
+                        side_effect=asyncio.TimeoutError()) as connect:
+            self.assertIsNone(await self.pool._connect_one('192.0.2.1', ws_domains(2, False)))
+        snis = [call.kwargs['sni'] for call in connect.call_args_list]
+        self.assertEqual(snis[:2], [None, FRONTING_SNI])
+        self.assertEqual(snis[2:], ws_sni_alternatives('kws2.web.telegram.org'))
+
+    async def test_open_network_dials_exactly_as_before(self):
+        # Where the own name passes, nothing new is ever dialled.
+        with mock.patch('proxy.pool.RawWebSocket.connect',
+                        return_value=_open_ws()) as connect:
+            for _ in range(3):
+                self.assertIsNotNone(await self.pool._connect_one('192.0.2.1', ws_domains(2, False)))
+        self.assertEqual([call.kwargs['sni'] for call in connect.call_args_list], [None] * 3)
+
+    async def test_cut_name_reaches_dc_through_substitute_sni_and_keeps_it(self):
+        # The 2026-11-18 network: kws2 and the front die, kws4 passes.
+        async def connect(host, domain, **kwargs):
+            if kwargs['sni'] == 'kws4.web.telegram.org':
+                return _open_ws()
+            raise asyncio.TimeoutError()
+
+        with mock.patch('proxy.pool.RawWebSocket.connect', side_effect=connect) as dial, \
+                self.assertLogs('tg-mtproto-proxy', 'INFO') as logs:
+            self.assertIsNotNone(await self.pool._connect_one('192.0.2.1', ws_domains(2, False)))
+        # The Host stays kws2 — that is what picks DC2 on the frontend.
+        self.assertEqual({call.args[1] for call in dial.call_args_list}, {'kws2.web.telegram.org'})
+        self.assertEqual(dial.call_args_list[-1].kwargs['sni'], 'kws4.web.telegram.org')
+        self.assertTrue(any('only with SNI kws4.web.telegram.org' in line for line in logs.output))
+
+        # Next refill goes straight to the name that worked.
+        with mock.patch('proxy.pool.RawWebSocket.connect', side_effect=connect) as dial:
+            self.assertIsNotNone(await self.pool._connect_one('192.0.2.1', ws_domains(2, False)))
+        self.assertEqual([call.kwargs['sni'] for call in dial.call_args_list],
+                         ['kws4.web.telegram.org'])
+
+    async def test_substitute_sni_does_not_flip_fronting_preference(self):
+        async def connect(host, domain, **kwargs):
+            if kwargs['sni'] == 'web.telegram.org':
+                return _open_ws()
+            raise asyncio.TimeoutError()
+
+        self.pool.try_fronting_first = True
+        with mock.patch('proxy.pool.RawWebSocket.connect', side_effect=connect):
+            self.assertIsNotNone(await self.pool._connect_one('192.0.2.1', ws_domains(4, False)))
+        self.assertTrue(self.pool.try_fronting_first)
+
+    async def test_cut_media_host_reaches_dc_through_regular_host(self):
+        async def connect(host, domain, **kwargs):
+            if domain == 'kws2.web.telegram.org' and kwargs['sni'] == 'kws4.web.telegram.org':
+                return _open_ws()
+            raise asyncio.TimeoutError()
+
+        with mock.patch('proxy.pool.RawWebSocket.connect', side_effect=connect) as dial:
+            self.assertIsNotNone(await self.pool._connect_one('192.0.2.1', ws_domains(2, True)))
+        media = [call.kwargs['sni'] for call in dial.call_args_list
+                 if call.args[1] == 'kws2-1.web.telegram.org']
+        self.assertEqual(media, [None, FRONTING_SNI])
+
+    async def test_dc_without_safe_substitute_dials_as_before(self):
+        with mock.patch('proxy.pool.RawWebSocket.connect',
+                        side_effect=asyncio.TimeoutError()) as connect:
+            self.assertIsNone(await self.pool._connect_one('192.0.2.1', ws_domains(3, False)))
+        self.assertEqual([call.kwargs['sni'] for call in connect.call_args_list],
+                         [None, FRONTING_SNI])
+
+    async def test_reset_forgets_learned_names(self):
+        self.pool._preferred_sni['kws2.web.telegram.org'] = 'kws4.web.telegram.org'
+        self.pool.reset()
+        self.assertEqual(self.pool._sni_order('kws2.web.telegram.org')[0], None)
 
     async def test_concurrent_preference_change_does_not_skip_fronting(self):
         ws = _open_ws()

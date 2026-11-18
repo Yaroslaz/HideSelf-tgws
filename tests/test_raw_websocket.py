@@ -233,3 +233,52 @@ class HandshakeCleanupTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SniSubstitutionTest(unittest.TestCase):
+    def test_alternatives_follow_measured_routing(self):
+        from proxy.utils import ws_sni_alternatives
+        self.assertEqual(ws_sni_alternatives('kws2.web.telegram.org'),
+                         ['kws4.web.telegram.org', 'web.telegram.org', 'telegram.org'])
+        self.assertEqual(ws_sni_alternatives('kws4.web.telegram.org'),
+                         ['kws2.web.telegram.org', 'web.telegram.org', 'telegram.org'])
+        # Media hosts: a stand-in there could not be proven to land right;
+        # media falls back to the regular host, which can.
+        self.assertEqual(ws_sni_alternatives('kws2-1.web.telegram.org'), [])
+        self.assertEqual(ws_sni_alternatives('kws4-1.web.telegram.org'), [])
+        # SNI kws5 answers 101 for any Host but lands in DC5; kws1 carries
+        # nothing. A wrong DC is worse than none, so these DCs get no stand-in.
+        for dc in (1, 3, 5):
+            self.assertEqual(ws_sni_alternatives(f'kws{dc}.web.telegram.org'), [])
+            self.assertEqual(ws_sni_alternatives(f'kws{dc}-1.web.telegram.org'), [])
+        for alternatives in (ws_sni_alternatives('kws2.web.telegram.org'),
+                             ws_sni_alternatives('kws4.web.telegram.org')):
+            self.assertNotIn('kws5.web.telegram.org', alternatives)
+        # Not a kws host (CF worker, CF proxy front): nothing to substitute.
+        self.assertEqual(ws_sni_alternatives('kws2.example.co.uk'), [])
+        self.assertEqual(ws_sni_alternatives('worker.example.workers.dev'), [])
+
+    def test_telegram_substitute_keeps_certificate_checks(self):
+        from proxy import raw_websocket
+        from proxy.utils import is_telegram_host
+        self.assertTrue(is_telegram_host('kws4.web.telegram.org'))
+        self.assertTrue(is_telegram_host('web.telegram.org'))
+        self.assertFalse(is_telegram_host('sprinthost.ru'))
+        self.assertFalse(is_telegram_host('nottelegram.org'))
+        self.assertTrue(raw_websocket._ssl_ctx.check_hostname)
+
+
+class SniContextTest(unittest.IsolatedAsyncioTestCase):
+    async def test_context_chosen_by_sni(self):
+        from proxy import raw_websocket
+        cases = [(None, raw_websocket._ssl_ctx, 'kws2.web.telegram.org'),
+                 ('kws4.web.telegram.org', raw_websocket._ssl_ctx, 'kws4.web.telegram.org'),
+                 ('sprinthost.ru', raw_websocket._ssl_ctx_fronting, 'sprinthost.ru')]
+        for sni, context, server_hostname in cases:
+            with self.subTest(sni=sni), patch(
+                    'proxy.raw_websocket.asyncio.open_connection',
+                    side_effect=ConnectionRefusedError()) as dial:
+                with self.assertRaises(ConnectionRefusedError):
+                    await RawWebSocket.connect('192.0.2.1', 'kws2.web.telegram.org', sni=sni)
+                self.assertIs(dial.call_args.kwargs['ssl'], context)
+                self.assertEqual(dial.call_args.kwargs['server_hostname'], server_hostname)

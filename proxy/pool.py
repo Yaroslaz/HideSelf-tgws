@@ -10,9 +10,13 @@ from typing import Dict, List, Optional, Tuple
 from .raw_websocket import RawWebSocket, WsHandshakeError
 from .stats import stats
 from .config import proxy_config
-from .utils import ws_domains, DC_DEFAULT_IPS, WS_PATH, WS_PATH_TEST
+from .utils import (ws_domains, ws_sni_alternatives, DC_DEFAULT_IPS,
+                    WS_PATH, WS_PATH_TEST)
 
 log = logging.getLogger('tg-mtproto-proxy')
+
+FRONTING_SNI = 'sprinthost.ru'
+_NO_PREFERENCE = object()
 
 # WSAENETUNREACH, ERROR_NETWORK_UNREACHABLE: no route on this host at all.
 _LOCAL_NETWORK_WINERRORS = {10051, 1231}
@@ -37,6 +41,8 @@ class _WsPool:
         self._refill_failures: Dict[Tuple[int, bool, bool], int] = {}
         self._refill_after: Dict[Tuple[int, bool, bool], float] = {}
         self.try_fronting_first = False
+        # Per kws host: the SNI that last opened it (None = its own name).
+        self._preferred_sni: Dict[str, Optional[str]] = {}
 
     async def get(self, dc: int, is_media: bool, *, is_test_dc: bool = False
                   ) -> Optional[RawWebSocket]:
@@ -179,26 +185,60 @@ class _WsPool:
             if self._rotating.get(key) is asyncio.current_task():
                 self._rotating.pop(key, None)
 
+    def _sni_order(self, domain: str) -> List[Optional[str]]:
+        """SNI values to try for `domain`, best guess first.
+
+        None is the domain's own name. After it and the foreign front come
+        other Telegram names the same frontend accepts for this Host
+        (`ws_sni_alternatives`): they only run once the usual two failed, so
+        a network where the own name passes dials exactly as before.
+        """
+        if self.try_fronting_first:
+            order: List[Optional[str]] = [FRONTING_SNI, None]
+        else:
+            order = [None, FRONTING_SNI]
+        order.extend(ws_sni_alternatives(domain))
+        preferred = self._preferred_sni.get(domain, _NO_PREFERENCE)
+        if preferred is not _NO_PREFERENCE and preferred in order:
+            order.remove(preferred)
+            order.insert(0, preferred)
+        return order
+
     async def _connect_one(self, target_ip, domains, path=WS_PATH) -> Optional[RawWebSocket]:
         for domain in domains:
-            modes = (True, False) if self.try_fronting_first else (False, True)
-            for fronted in modes:
+            for sni in self._sni_order(domain):
+                fronted = sni == FRONTING_SNI
                 try:
                     ws = await RawWebSocket.connect(
-                        target_ip, domain, timeout=7 if fronted else 8, path=path,
-                        sni="sprinthost.ru" if fronted else None)
+                        target_ip, domain, timeout=8 if sni is None else 7,
+                        path=path, sni=sni)
                 except Exception as exc:
                     stats.ws_errors += 1
-                    log.debug("WS pool connect %s%s via %s (fronting=%s): %r",
-                              domain, path, target_ip, fronted, exc)
+                    log.debug("WS pool connect %s%s via %s (sni=%s): %r",
+                              domain, path, target_ip, sni or 'own', exc)
                     continue
-                self.try_fronting_first = fronted
+                if sni is None or fronted:
+                    self.try_fronting_first = fronted
                 if fronted:
                     stats.connections_fronting += 1
-                log.debug("WS pool connected %s%s via %s (fronting=%s)",
-                          domain, path, target_ip, fronted)
+                self._remember_sni(domain, sni)
+                log.debug("WS pool connected %s%s via %s (sni=%s)",
+                          domain, path, target_ip, sni or 'own')
                 return ws
         return None
+
+    def _remember_sni(self, domain: str, sni: Optional[str]) -> None:
+        previous = self._preferred_sni.get(domain, _NO_PREFERENCE)
+        self._preferred_sni[domain] = sni
+        if previous == sni or sni == FRONTING_SNI:
+            return
+        # Said once per change, not per dial: this is the line that explains
+        # why a DC came back on a network that cuts its own name.
+        if sni is None:
+            if previous is not _NO_PREFERENCE:
+                log.info("WS %s reachable under its own name again", domain)
+        else:
+            log.info("WS %s reachable only with SNI %s", domain, sni)
 
     async def _quiet_close(self, ws):
         try:
@@ -233,6 +273,7 @@ class _WsPool:
         self._refill_failures.clear()
         self._refill_after.clear()
         self.try_fronting_first = False
+        self._preferred_sni.clear()
 
     async def close(self):
         tasks = list(self._rotating.values()) + list(self._refilling.values())
