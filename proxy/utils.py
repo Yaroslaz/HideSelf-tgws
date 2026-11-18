@@ -69,6 +69,47 @@ def ws_domains(dc: int, is_media: bool) -> List[str]:
     return [f'kws{dc}-1.web.telegram.org', f'kws{dc}.web.telegram.org']
 
 
+def is_telegram_host(name: str) -> bool:
+    name = name.lower().rstrip('.')
+    return name == 'telegram.org' or name.endswith('.telegram.org')
+
+
+# Only the regular hosts. A media host (kws2-1) gets no stand-in: media DCs do
+# not answer help.getConfig to a fresh key even under their own name, so a
+# substitute there could not be proven to land right. Media still reaches a
+# cut DC — ws_domains() tries the regular kws2 after kws2-1, and that path is
+# the one checked below.
+_KWS_HOST = re.compile(r'^kws(\d+)\.web\.telegram\.org$')
+
+# Names that may stand in the SNI for a cut kws* name of DC2 or DC4.
+#
+# Checked 2026-11-18 end to end, not by the 101 alone: a throwaway client
+# asked help.getConfig through the bridge and compared this_dc. With SNI
+# kws4, web.telegram.org or telegram.org and Host kws2 the answer was DC2 —
+# on this shared vhost the Host header picks the data centre. Everything else
+# that also answers 101 lands in the wrong place or nowhere: SNI kws5 with
+# Host kws2 is DC5, SNI kws1 with Host kws3 carries nothing. So DC1, DC3 and
+# DC5 get no substitute; a wrong DC is worse than a dead one, because Telegram
+# then fails on its auth key instead of moving on to the next path.
+#
+# Wanted by a network seen the same day that cuts kws2 by name but lets kws4
+# through: DC4 alive, DC2 dead.
+_SNI_SHARED_2_4 = ('kws2.web.telegram.org', 'kws4.web.telegram.org',
+                   'web.telegram.org', 'telegram.org')
+
+
+def ws_sni_alternatives(domain: str) -> List[str]:
+    """Other names to put in the SNI when `domain` itself is cut.
+
+    The Host header stays `domain`, which is what picks the data centre on
+    the DC2/DC4 frontend. Empty for every other host.
+    """
+    match = _KWS_HOST.match(domain.lower())
+    if not match or int(match.group(1)) not in (2, 4):
+        return []
+    return [name for name in _SNI_SHARED_2_4 if name != domain.lower()]
+
+
 def human_bytes(n: int) -> str:
     for unit in ('B', 'KB', 'MB', 'GB'):
         if abs(n) < 1024:

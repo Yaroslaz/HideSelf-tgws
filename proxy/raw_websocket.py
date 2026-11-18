@@ -7,7 +7,7 @@ import socket as _socket
 
 from typing import List, Optional, Tuple
 from .config import proxy_config
-from .utils import create_ssl_context
+from .utils import create_ssl_context, is_telegram_host
 
 log = logging.getLogger('tg-mtproto-proxy')
 
@@ -93,7 +93,12 @@ class RawWebSocket:
     async def connect(host: str, domain: str, timeout: float = 10.0,
                       path: str = '/apiws', *,
                       sni: Optional[str] = None, secure = True) -> 'RawWebSocket':
-        ssl_context = _ssl_ctx_fronting if sni else _ssl_ctx
+        # A Telegram name in the SNI (another kws* host standing in for a
+        # blocked one) is covered by Telegram's own certificate, so it keeps
+        # full verification; only a foreign front name skips the hostname
+        # check.
+        ssl_context = (_ssl_ctx_fronting if sni and not is_telegram_host(sni)
+                       else _ssl_ctx)
 
         if sni is None:
             sni = domain
