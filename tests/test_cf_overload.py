@@ -221,8 +221,10 @@ class CfFallbackRoundsTest(unittest.IsolatedAsyncioTestCase):
 
         with mock.patch.object(bridge.RawWebSocket, 'connect', side_effect=connect):
             self.assertTrue(await asyncio.wait_for(self._fallback(), 2))
-        await asyncio.sleep(0)
-        self.assertTrue(slow_cancelled.is_set())
+        # The dial sits one task deeper now (cf_dial hedges the scheme), so
+        # the cancellation takes a loop turn more to reach it; how many is the
+        # event loop's business, not this test's.
+        await asyncio.wait_for(slow_cancelled.wait(), 1)
 
 
 if __name__ == '__main__':

@@ -139,7 +139,7 @@ class ConnectCfTest(unittest.IsolatedAsyncioTestCase):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.05)
             self.assertEqual(len(asyncio.all_tasks()), before - 3)
 
 
