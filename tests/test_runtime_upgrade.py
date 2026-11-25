@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import os
 import ssl
@@ -11,6 +12,13 @@ from proxy import bridge, raw_websocket, tg_ws_proxy
 from proxy.cf_h2 import _HttpLane
 from proxy.config import proxy_config
 from proxy.pool import _CfWorkerPool
+
+
+def _client():
+    """A client that is still there, for `client_setup` (upstream v1.12.0)."""
+    writer = mock.Mock()
+    writer.is_closing.return_value = False
+    return asyncio.StreamReader(), writer
 
 
 class RuntimeUpgradeTest(unittest.IsolatedAsyncioTestCase):
@@ -40,14 +48,14 @@ class RuntimeUpgradeTest(unittest.IsolatedAsyncioTestCase):
         proxy_config.cfproxy_worker_domains = ['worker.example']
         for secure in (True, False):
             proxy_config.disable_secure = not secure
-            ws = mock.Mock(send=mock.AsyncMock())
+            ws = mock.Mock(send_init=mock.AsyncMock())
             with mock.patch.object(bridge.cf_worker_pool, 'get', new=mock.AsyncMock(return_value=None)), \
                  mock.patch.object(bridge.cf_worker_pool, 'available_domains', return_value=['worker.example']), \
                  mock.patch.object(bridge.cf_worker_pool, 'report_success') as success, \
                  mock.patch.object(bridge.RawWebSocket, 'connect', new=mock.AsyncMock(return_value=ws)) as dial, \
                  mock.patch.object(bridge, 'bridge_ws_reencrypt', new=mock.AsyncMock()):
                 result = await bridge._cfproxy_worker_fallback(
-                    None, None, b'init', 'test', None, 2, False, False, '149.154.167.51')
+                    *_client(), b'init', 'test', None, 2, False, False, '149.154.167.51')
                 self.assertTrue(result)
                 self.assertEqual(dial.call_args.kwargs['secure'], secure)
                 success.assert_called_once_with('worker.example')
@@ -58,9 +66,9 @@ class RuntimeUpgradeTest(unittest.IsolatedAsyncioTestCase):
             with mock.patch.object(bridge.balancer, 'get_domains_for_dc', return_value=iter(['front.example'])), \
                  mock.patch.object(bridge.balancer, 'report_success') as success, \
                  mock.patch.object(bridge.balancer, 'update_domain_for_dc', return_value=False), \
-                 mock.patch.object(bridge.RawWebSocket, 'connect', new=mock.AsyncMock(return_value=mock.Mock(send=mock.AsyncMock()))) as dial, \
+                 mock.patch.object(bridge.RawWebSocket, 'connect', new=mock.AsyncMock(return_value=mock.Mock(send_init=mock.AsyncMock()))) as dial, \
                  mock.patch.object(bridge, 'bridge_ws_reencrypt', new=mock.AsyncMock()):
-                self.assertTrue(await bridge._cfproxy_fallback(None, None, b'init', 'test', None, 2, False))
+                self.assertTrue(await bridge._cfproxy_fallback(*_client(), b'init', 'test', None, 2, False))
                 self.assertEqual(dial.call_args.kwargs['secure'], secure)
                 success.assert_called_once_with('front.example')
 
@@ -68,7 +76,7 @@ class RuntimeUpgradeTest(unittest.IsolatedAsyncioTestCase):
         for secure in (True, False):
             proxy_config.disable_secure = not secure
             with mock.patch.object(raw_websocket.RawWebSocket, 'connect', new=mock.AsyncMock(return_value=object())) as dial:
-                self.assertIsNotNone(await _CfWorkerPool()._connect_one(['worker.example'], '149.154.167.51', 2))
+                self.assertIsNotNone(await _CfWorkerPool().connect_one(['worker.example'], '149.154.167.51', 2))
                 self.assertEqual(dial.call_args.kwargs['secure'], secure)
 
     def test_tls_verifies_certificate_chain_with_bundled_roots(self):

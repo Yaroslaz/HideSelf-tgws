@@ -14,6 +14,12 @@ other one alongside it once the first has been silent for `HEDGE_DELAY`.
 Whichever completes the WebSocket handshake wins and is remembered, so a
 network that cuts TLS pays the delay once, not on every connection.
 
+Upstream v1.12.0 answers the same outage in `cf_websocket.py`: fronts are
+tried one after another, alternating TLS and plain, with 3-10s timeouts. The
+fork keeps its own path instead -- fronts race three at a time behind a
+breaker (bridge.py, balancer.py), and a serial dial would undo that -- so
+`cf_websocket.py` is carried along unused, only to keep later syncs quiet.
+
 What the stand-in gives away: the front's name travels in the Host header
 instead of the SNI -- the same name, readable either way. The payload is the
 obfuscated MTProto stream in both cases.

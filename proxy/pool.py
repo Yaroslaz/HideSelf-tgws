@@ -353,12 +353,22 @@ class _CfWorkerPool:
                 or ws.writer.transport.is_closing() or ws.reader.at_eof()
                 or ws.reader.exception() is not None)
 
+    def _defer_if_all_workers_paused(self, dc, worker_domains, now):
+        first_available = min(self._unavailable_until.get(domain, now)
+                              for domain in worker_domains)
+        if first_available <= now:
+            return False
+        self._refill_after[dc] = first_available
+        return True
+
     def _schedule_refill(self, dc, fallback_dst, worker_domains):
         if proxy_config.pool_size <= 0 or not worker_domains:
             return
         self._schedule_rotation(dc, fallback_dst, worker_domains)
+        now = time.monotonic()
         if (dc in self._refilling
-                or time.monotonic() < self._refill_after.get(dc, 0)):
+                or self._defer_if_all_workers_paused(dc, worker_domains, now)
+                or now < self._refill_after.get(dc, 0)):
             return
         self._refilling[dc] = asyncio.create_task(self._refill(
             dc, fallback_dst, list(worker_domains)))
@@ -378,7 +388,7 @@ class _CfWorkerPool:
 
             connected = 0
             for _ in range(needed):
-                result = await self._connect_one(
+                result = await self.connect_one(
                     worker_domains, fallback_dst, dc)
                 # reset() between dials hands the DC to a newer refill (or to
                 # nobody, on shutdown): this socket belongs to neither, and
@@ -398,6 +408,9 @@ class _CfWorkerPool:
                 self._refill_failures.pop(dc, None)
                 self._refill_after.pop(dc, None)
             else:
+                now = time.monotonic()
+                if self._defer_if_all_workers_paused(dc, worker_domains, now):
+                    return
                 failures = self._refill_failures.get(dc, 0) + 1
                 self._refill_failures[dc] = failures
                 delay = min(
@@ -405,7 +418,7 @@ class _CfWorkerPool:
                     * (2 ** min(failures - 1, 6)),
                     self.REFILL_BACKOFF_MAX,
                 )
-                self._refill_after[dc] = time.monotonic() + delay
+                self._refill_after[dc] = now + delay
                 log.info("CF worker pool refill failed for DC%d, retry in %.0fs",
                          dc, delay)
             log.debug("CF worker pool refilled DC%d: %d ready",
@@ -455,16 +468,20 @@ class _CfWorkerPool:
             if self._rotating.get(dc) is asyncio.current_task():
                 self._rotating.pop(dc, None)
 
-    async def _connect_one(self, worker_domains, fallback_dst, dc):
+    async def connect_one(self, worker_domains: List[str], fallback_dst: str, dc: int, *,
+                          timeout: float = 8.0) -> Optional[Tuple[RawWebSocket, str]]:
         query = urlencode({
             'dst': fallback_dst,
             'dc': str(dc),
         })
         path = f'/apiws?{query}'
+        # The scheme (wss:// or the ws:// stand-in) is picked in cf_dial, per
+        # worker; upstream v1.12.0 does the same job here with a TLS/no-TLS
+        # loop, which the fork's hedge replaces.
         for worker_domain in self.available_domains(worker_domains):
             try:
                 ws = await connect_cf(worker_domain, worker_domain,
-                                      worker_domain, timeout=8, path=path)
+                                      worker_domain, timeout=timeout, path=path)
                 return ws, worker_domain
             except Exception as exc:
                 log.debug("CF worker pool connect DC%d via %s for %s failed: %r",
