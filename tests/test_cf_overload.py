@@ -121,6 +121,9 @@ class _Ws:
     async def send(self, data):
         self.sent.append(data)
 
+    async def send_init(self, data):
+        await self.send(data)
+
     async def close(self):
         self.closed = True
 
@@ -151,7 +154,11 @@ class CfFallbackRoundsTest(unittest.IsolatedAsyncioTestCase):
         return mock.patch.object(bridge.RawWebSocket, 'connect', side_effect=connect)
 
     async def _fallback(self):
-        return await bridge._cfproxy_fallback(None, None, b'init', 'test', None,
+        # A client that is still there, for `client_setup` (upstream v1.12.0).
+        writer = mock.Mock()
+        writer.is_closing.return_value = False
+        return await bridge._cfproxy_fallback(asyncio.StreamReader(), writer,
+                                              b'init', 'test', None,
                                               dc=2, is_media=False)
 
     async def test_busy_fronts_are_retried_until_one_answers(self):

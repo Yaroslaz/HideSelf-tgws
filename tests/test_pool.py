@@ -322,6 +322,7 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
         self.pool.WS_POOL_CHECK_INTERVAL = .01
         for name, value in [
                 ('pool_size', 4),
+                ('disable_secure', False),
                 ('dc_redirects', {dc: ip for dc, ip in DC_DEFAULT_IPS.items() if dc != 2}),
                 ('cfproxy_worker_domains', ['worker.example'])]:
             patcher = mock.patch.object(proxy_config, name, value)
@@ -335,10 +336,17 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(.001)
         await asyncio.wait_for(wait(), 1)
 
+    async def test_connect_one_never_tries_tls_when_disabled(self):
+        with mock.patch.object(proxy_config, 'disable_secure', True), \
+                mock.patch.object(RawWebSocket, 'connect', side_effect=TimeoutError()) as dial:
+            self.assertIsNone(await self.pool.connect_one(['worker.example'], '192.0.2.2', 2))
+        dial.assert_awaited_once_with('worker.example', 'worker.example', timeout=8.0,
+                                     path='/apiws?dst=192.0.2.2&dc=2', secure=False)
+
     async def test_failed_warmup_recovers_without_new_client_requests(self):
         ready = _open_ws()
         self.pool.REFILL_BACKOFF_INITIAL = .03
-        with mock.patch.object(self.pool, '_connect_one',
+        with mock.patch.object(self.pool, 'connect_one',
                                side_effect=[None, (ready, 'worker.example')]) as dial:
             await self.pool.warmup()
             await self.wait_for(lambda: 2 in self.pool._refill_after)
@@ -365,11 +373,13 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
                 else:
                     stale.writer.transport.is_closing = lambda: True
                 self.pool._idle[2] = deque([(stale, created, 'worker.example')])
-                with mock.patch.object(self.pool, '_connect_one',
+                with mock.patch.object(self.pool, 'connect_one',
                                        return_value=(ready, 'worker.example')):
                     self.assertIsNone(await self.pool.get(2, '192.0.2.2', ['worker.example']))
                     await self.wait_for(lambda: bool(self.pool._idle[2]))
                     self.assertIs(self.pool._idle[2][0][0], ready)
+                    # Refill and stale connection cleanup run independently.
+                    await self.wait_for(lambda: stale.writer.close.called)
                     stale.writer.close.assert_called_once()
                     await self.pool.close()
 
@@ -377,7 +387,7 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
         stale, ready = _open_ws(), _open_ws()
         self.pool.WS_POOL_MAX_AGE = .05
         self.pool._idle[2] = deque([(stale, time.monotonic(), 'worker.example')])
-        with mock.patch.object(self.pool, '_connect_one',
+        with mock.patch.object(self.pool, 'connect_one',
                                return_value=(ready, 'worker.example')) as dial:
             await self.pool.warmup()
             await self.wait_for(lambda: stale.writer.close.called)
@@ -392,7 +402,7 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
             started.set()
             await asyncio.Future()
 
-        with mock.patch.object(self.pool, '_connect_one', side_effect=connect) as dial:
+        with mock.patch.object(self.pool, 'connect_one', side_effect=connect) as dial:
             for _ in range(10):
                 self.assertIsNone(await self.pool.get(2, '192.0.2.2', ['worker.example']))
             await asyncio.wait_for(started.wait(), 1)
@@ -402,7 +412,7 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
         ready = _open_ws()
         self.pool.REFILL_BACKOFF_INITIAL = 1
         self.pool.REFILL_BACKOFF_MAX = 2
-        with mock.patch.object(self.pool, '_connect_one',
+        with mock.patch.object(self.pool, 'connect_one',
                                side_effect=[None, None, None, (ready, 'worker.example')]), \
                 mock.patch.object(self.pool, '_schedule_rotation'):
             for failures, delay in enumerate((1, 2, 2), 1):
@@ -423,7 +433,7 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_misses_during_backoff_do_not_retry_and_shutdown_cancels_retry(self):
         self.pool.REFILL_BACKOFF_INITIAL = 60
-        with mock.patch.object(self.pool, '_connect_one', return_value=None) as dial:
+        with mock.patch.object(self.pool, 'connect_one', return_value=None) as dial:
             await self.pool.warmup()
             await self.wait_for(lambda: 2 in self.pool._refill_after)
             for _ in range(10):
@@ -453,8 +463,50 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.pool._refill_after[2], retry_at)
         self.assertFalse(self.pool._refilling)
 
+    async def test_all_paused_workers_defer_refill_until_first_expiry(self):
+        domains = ['later.example', 'first.example']
+        self.pool._unavailable_until.update({
+            'later.example': 200, 'first.example': 150, 'unrelated.example': 105,
+        })
+        self.pool._refill_after[2] = 180
+        self.pool._refill_failures[2] = 3
+        with mock.patch('proxy.pool.time') as clock, \
+                mock.patch.object(self.pool, '_schedule_rotation'), \
+                mock.patch.object(RawWebSocket, 'connect', return_value=_open_ws()) as dial:
+            for now in (100, 149):
+                clock.monotonic.return_value = now
+                await self.pool.get(2, '192.0.2.2', domains)
+                self.assertEqual(self.pool._refill_after[2], 150)
+                self.assertEqual(self.pool._refill_failures[2], 3)
+                self.assertNotIn(2, self.pool._refilling)
+                dial.assert_not_awaited()
+
+            clock.monotonic.return_value = 150
+            await self.pool.get(2, '192.0.2.2', domains)
+            await self.pool._refilling[2]
+            dial.assert_awaited_once()
+            self.assertEqual(self.pool._idle[2][0][2], 'first.example')
+            self.assertNotIn(2, self.pool._refill_failures)
+            self.assertNotIn(2, self.pool._refill_after)
+
+    async def test_failed_dial_pauses_last_available_worker(self):
+        self.pool._unavailable_until['paused.example'] = 120
+        with mock.patch('proxy.pool.time') as clock, \
+                mock.patch.object(self.pool, '_schedule_rotation'), \
+                mock.patch.object(RawWebSocket, 'connect', side_effect=OSError()) as dial:
+            clock.monotonic.return_value = 100
+            await self.pool.get(2, '192.0.2.2', ['paused.example', 'ready.example'])
+            await self.pool._refilling[2]
+            # Two dials for the one worker: wss://, then the ws:// stand-in
+            # (cf_dial) once TLS was refused outright.
+            self.assertEqual(dial.await_count, 2)
+            self.assertEqual(self.pool._unavailable_until['ready.example'],
+                             100 + self.pool.FAILURE_COOLDOWN)
+            self.assertEqual(self.pool._refill_after[2], 120)
+            self.assertNotIn(2, self.pool._refill_failures)
+
     async def test_zero_size_and_missing_worker_domains_do_not_start_refills(self):
-        with mock.patch.object(self.pool, '_connect_one') as dial:
+        with mock.patch.object(self.pool, 'connect_one') as dial:
             with mock.patch.object(proxy_config, 'pool_size', 0):
                 await self.pool.warmup()
                 self.assertIsNone(await self.pool.get(2, '192.0.2.2', ['worker.example']))
@@ -480,7 +532,7 @@ class CfWorkerPoolTest(unittest.IsolatedAsyncioTestCase):
                 return ready, 'b.example'
 
         with mock.patch.object(proxy_config, 'pool_size', 1), \
-                mock.patch.object(pool, '_connect_one', side_effect=connect):
+                mock.patch.object(pool, 'connect_one', side_effect=connect):
             pool._schedule_refill(4, '192.0.2.4', ['b.example'])
             await asyncio.wait_for(started.wait(), 1)
             await pool.close()

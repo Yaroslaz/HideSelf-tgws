@@ -103,7 +103,7 @@ class CfWorkerPoolTest(unittest.TestCase):
     def _get(self, connect_one):
         """One `get` plus whatever refill it scheduled."""
         async def _run():
-            self.pool._connect_one = connect_one
+            self.pool.connect_one = connect_one
             result = await self.pool.get(self.DC, self.DST, self.workers)
             await _settle()
             return result
@@ -161,7 +161,7 @@ class CfWorkerPoolTest(unittest.TestCase):
             self.pool.report_failure(worker, TimeoutError())
 
         async def _run():
-            self.pool._connect_one = self._serving()
+            self.pool.connect_one = self._serving()
             await self.pool._refill(self.DC, self.DST, self.workers)
         asyncio.run(_run())
 
@@ -264,7 +264,7 @@ class CfWorkerPoolTest(unittest.TestCase):
                 dialled.append(ws)
                 return ws, self.workers[0]
 
-            with mock.patch.object(self.pool, '_connect_one', slow_connect):
+            with mock.patch.object(self.pool, 'connect_one', slow_connect):
                 self.assertIsNone(
                     await self.pool.get(self.DC, self.DST, self.workers))
                 await asyncio.sleep(0)
@@ -290,7 +290,7 @@ class CfWorkerPoolTest(unittest.TestCase):
             # The fake clock stands still, so the workers stay resting while
             # the loop really ticks a few dozen times.
             self.pool.WS_POOL_CHECK_INTERVAL = 0.001
-            self.pool._connect_one = self._serving()
+            self.pool.connect_one = self._serving()
             _CfWorkerPool._schedule_rotation(
                 self.pool, self.DC, self.DST, self.workers)
             await asyncio.sleep(0.05)

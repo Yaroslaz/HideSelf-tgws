@@ -3,12 +3,16 @@ import asyncio
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
+from proxy import bridge
 from proxy._aes import Cipher, algorithms, modes
 from proxy.bridge import MsgSplitter, bridge_ws_reencrypt
+from proxy.config import proxy_config
 from proxy.network_debug import WsActivity, log_ws_flow
+from proxy.raw_websocket import RawWebSocket
 from proxy.utils import (
+    DC_DEFAULT_IPS,
     PROTO_ABRIDGED_INT,
     PROTO_INTERMEDIATE_INT,
     PROTO_PADDED_INTERMEDIATE_INT,
@@ -36,6 +40,36 @@ def _abridged(payload: bytes) -> bytes:
 
 def _intermediate(payload: bytes) -> bytes:
     return len(payload).to_bytes(4, 'little') + payload
+
+
+class CfWorkerFallbackTest(unittest.IsolatedAsyncioTestCase):
+    async def test_pool_miss_dials_a_resting_aware_worker_and_reports_it(self):
+        # Upstream v1.12.0 hands a pool miss to `cf_worker_pool.connect_one`.
+        # The fork keeps the dial in the fallback itself: the worker breaker
+        # is told about the outcome there, and the "trying CF worker" line it
+        # logs is what the HideSelf client reads the session's route from.
+        reader = asyncio.StreamReader()
+        writer = Mock()
+        writer.is_closing.return_value = False
+        ws = Mock(send_init=AsyncMock())
+        domains = ['worker.example']
+        pool = SimpleNamespace(get=AsyncMock(return_value=None),
+                               available_domains=Mock(return_value=domains),
+                               report_success=Mock(), report_failure=Mock())
+        ctx = Mock()
+        with patch.object(proxy_config, 'cfproxy_worker_domains', domains),                 patch.object(proxy_config, 'disable_secure', False),                 patch.object(bridge, 'cf_worker_pool', pool),                 patch.object(RawWebSocket, 'connect', new_callable=AsyncMock, return_value=ws) as dial,                 patch.object(bridge, 'bridge_ws_reencrypt', new_callable=AsyncMock) as relay,                 self.assertLogs('tg-mtproto-proxy', 'INFO') as logs:
+            self.assertTrue(await bridge.do_fallback(
+                reader, writer, b'init', 'test', 2, False, True, ' media', ctx))
+
+        pool.get.assert_awaited_once_with(2, DC_DEFAULT_IPS[2], domains)
+        dial.assert_awaited_once()
+        self.assertEqual(dial.await_args.args[:2], ('worker.example', 'worker.example'))
+        self.assertEqual(dial.await_args.kwargs['path'], '/apiws?dst=%s&dc=2' % DC_DEFAULT_IPS[2])
+        pool.report_success.assert_called_once_with('worker.example')
+        pool.report_failure.assert_not_called()
+        self.assertTrue(any('-> trying CF worker worker.example' in line for line in logs.output))
+        ws.send_init.assert_awaited_once_with(b'init')
+        relay.assert_awaited_once_with(reader, writer, ws, 'test', ctx, dc=2, is_media=True, splitter=None)
 
 
 class MsgSplitterTest(unittest.TestCase):
