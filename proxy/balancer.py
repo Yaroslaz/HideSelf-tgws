@@ -46,6 +46,15 @@ class _Balancer:
     # dial of the same fallback on another front.
     OVERLOAD_HOLD = 2.0
     OVERLOAD_STATUSES = frozenset((429, 502, 503, 504))
+    # With every front benched the fallback used to give up on the spot, and
+    # Telegram got "no fallback available" until a bench ran out: a whole
+    # minute after one bad burst, up to ten after a few. Live capture,
+    # 2026-11-25: six fronts timed out within two seconds, the rest followed,
+    # and for the next minute every client was turned away right after its
+    # handshake. One probe round per this many seconds keeps a way back
+    # open at a cost of a dozen dials a minute -- nowhere near the thousands
+    # the bench exists to prevent.
+    LAST_RESORT_GAP = 5.0
 
     def __init__(self):
         self.domains: List[str] = []
@@ -58,6 +67,7 @@ class _Balancer:
         # the front is already benched is the same outage reported again.
         self._benched_until: Dict[str, float] = {}
         self._healthy: Set[str] = set()
+        self._last_resort_at = float('-inf')
 
     def update_domains_list(self, domains_list: List[str]) -> None:
         if Counter(self.domains) == Counter(domains_list):
@@ -124,6 +134,27 @@ class _Balancer:
             if reserve_unproven and domain not in self._healthy:
                 self._unavailable_until[domain] = now + self.IN_FLIGHT_HOLD
             yield domain
+
+    def last_resort_domains(self, dc_id: int) -> List[str]:
+        """Benched fronts worth one more dial when nothing else is left.
+
+        Empty unless the whole pool sits on a real bench: a front that is
+        merely held by a dial in flight means another fallback is already
+        finding out, and this one should not pile on. A failure of a probe
+        does not climb the ladder (`report_failure` ignores a front that is
+        already benched), a success takes the front off the bench as usual.
+        """
+        now = time.monotonic()
+        if not self.domains or now - self._last_resort_at < self.LAST_RESORT_GAP:
+            return []
+        if any(self._benched_until.get(d, 0.0) <= now for d in self.domains):
+            return []
+        # Fewest failures first, then the bench that ends soonest: the front
+        # most likely to have been caught by a passing blip rather than cut.
+        ranked = sorted(set(self.domains), key=lambda d: (
+            self._failures.get(d, 0), self._benched_until.get(d, 0.0)))
+        self._last_resort_at = now
+        return ranked[:self.MAX_ATTEMPTS]
 
     def report_success(self, domain: str) -> None:
         self._unavailable_until.pop(domain, None)

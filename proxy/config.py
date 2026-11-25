@@ -72,6 +72,9 @@ class ProxyConfig:
     cfproxy_worker_domains: List[str] = field(default_factory=list)
     cfproxy_h2_media: bool = True
     disable_secure: bool = False
+    # Seconds a session may leave the client's requests unanswered before the
+    # proxy closes it (see STALL_* in bridge.py). 0 switches the watch off.
+    stall_timeout: float = 6.0
     fake_tls_domain: str = ''
     proxy_protocol: bool = False
     force_test_dc: bool = False

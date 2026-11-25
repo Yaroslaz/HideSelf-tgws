@@ -11,6 +11,7 @@ from .stats import stats
 from .balancer import balancer
 from .config import proxy_config
 from .raw_websocket import RawWebSocket
+from .cf_dial import FRONTS, connect_cf, scheme_memory
 from .pool import cf_worker_pool
 from .network_debug import WsActivity
 from .cf_h2 import bridge_h2
@@ -161,7 +162,11 @@ async def do_fallback(reader, writer, relay_init, label,
             if ok:
                 return True
         elif method == 'cf':
-            if is_media and h2_pool is not None and proto_tag is not None:
+            # H2 rides TLS only. Where the fronts answer just over ws://, its
+            # setup would time out first and hold every media connection for
+            # that long before the WebSocket route got its turn.
+            if (is_media and h2_pool is not None and proto_tag is not None
+                    and not scheme_memory.prefers_plain(FRONTS)):
                 channel = await h2_pool.open(dc, label)
                 if channel is not None:
                     stats.connections_h2 += 1
@@ -213,9 +218,8 @@ async def _cfproxy_worker_fallback(reader, writer, relay_init, label,
                      label, dc, media_tag, worker_domain, fallback_dst)
 
             try:
-                ws = await RawWebSocket.connect(worker_domain, worker_domain,
-                                                timeout=10.0, path=path,
-                                                secure=not proxy_config.disable_secure)
+                ws = await connect_cf(worker_domain, worker_domain,
+                                      worker_domain, timeout=10.0, path=path)
                 cf_worker_pool.report_success(worker_domain)
                 break
             except Exception as exc:
@@ -256,6 +260,31 @@ CF_OVERLOAD_ATTEMPTS = 12
 CF_RACE_WIDTH = 3
 CF_CONNECT_TIMEOUT = 10.0
 
+# A session whose requests go unanswered is closed here instead of being left
+# for Telegram to give up on.
+#
+# Live captures, 2026-11-25, through both the CF pool and the user's worker:
+# single connections went silent downstream -- one after 452 bytes, one after
+# 12.7 MB -- while their neighbours on the very same front kept receiving.
+# The client went on sending a few hundred bytes every few seconds, got
+# nothing, and dropped the connection itself after 15-16s; the connection it
+# opened next was answered within 80-330ms. So each frozen connection cost a
+# quarter of a minute of "connecting...", and a few in a row looked like a
+# dead proxy. Closing it after `proxy_config.stall_timeout` hands Telegram its
+# retry that much sooner. It does not cure the freeze -- nothing on this side
+# can -- it only stops waiting for a reply that is not coming.
+#
+# Two guards keep a healthy connection out of it. One unanswered packet is
+# not a stall: an acknowledgement after a finished download is never replied
+# to, and the connection then idles by right. And a client that has sent a
+# lot since the last reply is uploading, on a link that may need longer than
+# the timeout for one part: its requests are not being ignored, they are
+# still on their way. Across the four captures the longest wait for a reply
+# on a live connection was 0.98s.
+STALL_MIN_PACKETS = 2
+STALL_MAX_BYTES = 16 * 1024
+STALL_CHECK_INTERVAL = 1.0
+
 
 async def _race_fronts(domains: List[str], dc: int):
     """Dial `kws{dc}.<front>` for every front at once.
@@ -266,8 +295,8 @@ async def _race_fronts(domains: List[str], dc: int):
     """
     async def dial(base_domain):
         domain = f'kws{dc}.{base_domain}'
-        ws = await RawWebSocket.connect(domain, domain, timeout=CF_CONNECT_TIMEOUT,
-                                        secure=not proxy_config.disable_secure)
+        ws = await connect_cf(FRONTS, domain, domain,
+                              timeout=CF_CONNECT_TIMEOUT)
         return ws, base_domain
 
     tasks = {asyncio.ensure_future(dial(d)): d for d in domains}
@@ -322,6 +351,12 @@ async def _cfproxy_fallback(reader, writer, relay_init, label,
 
     while ws is None:
         round_domains = list(balancer.get_domains_for_dc(dc))[:CF_RACE_WIDTH]
+        if not round_domains and not tried:
+            round_domains = balancer.last_resort_domains(dc)[:CF_RACE_WIDTH]
+            if round_domains:
+                log.info("[%s] DC%d%s -> every CF front on cooldown, "
+                         "probing the ones benched longest",
+                         label, dc, media_tag)
         if not round_domains:
             break
         # Announced from inside the loop: with every front on cooldown the
@@ -431,9 +466,16 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
     start_time = asyncio.get_running_loop().time()
     close_reason = 'normal'
     activity = WsActivity(label, dc_tag) if log.isEnabledFor(logging.DEBUG) else None
+    loop = asyncio.get_running_loop()
+    stall_timeout = proxy_config.stall_timeout
+    # What the client has sent since the last byte from upstream.
+    waiting_since: Optional[float] = None
+    waiting_packets = 0
+    waiting_bytes = 0
 
     async def tcp_to_ws():
         nonlocal up_bytes, up_packets, close_reason
+        nonlocal waiting_since, waiting_packets, waiting_bytes
         try:
             while True:
                 chunk = await reader.read(65536)
@@ -453,6 +495,10 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                 stats.bytes_up += n
                 up_bytes += n
                 up_packets += 1
+                if waiting_since is None:
+                    waiting_since = loop.time()
+                waiting_packets += 1
+                waiting_bytes += n
                 plain = ctx.clt_dec.update(chunk)
                 chunk = ctx.tg_enc.update(plain)
                 if splitter:
@@ -483,6 +529,7 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
 
     async def ws_to_tcp():
         nonlocal down_bytes, down_packets, close_reason
+        nonlocal waiting_since, waiting_packets, waiting_bytes
         try:
             while True:
                 data = await ws.recv()
@@ -491,6 +538,9 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
                         close_reason = 'upstream: ws_close'
                     break
                 n = len(data)
+                waiting_since = None
+                waiting_packets = 0
+                waiting_bytes = 0
                 if activity is not None:
                     activity.received(n)
                 stats.bytes_down += n
@@ -512,8 +562,24 @@ async def bridge_ws_reencrypt(reader, writer, ws: RawWebSocket, label,
             close_reason = f"upstream: {type(e).__name__}: {e}"
             log.debug("[%s] ws->tcp ended: %s", label, e)
 
+    async def watch_stall():
+        nonlocal close_reason
+        while True:
+            await asyncio.sleep(STALL_CHECK_INTERVAL)
+            if (waiting_since is None
+                    or waiting_packets < STALL_MIN_PACKETS
+                    or waiting_bytes > STALL_MAX_BYTES):
+                continue
+            silent = loop.time() - waiting_since
+            if silent >= stall_timeout:
+                stats.ws_stalled += 1
+                close_reason = 'stalled: no reply in %.0fs' % silent
+                return
+
     tasks = [asyncio.create_task(tcp_to_ws()),
              asyncio.create_task(ws_to_tcp())]
+    if stall_timeout > 0:
+        tasks.append(asyncio.create_task(watch_stall()))
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     finally:
