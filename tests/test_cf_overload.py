@@ -62,6 +62,46 @@ class BalancerOverloadTest(unittest.TestCase):
         bench = self.balancer.report_failure(domain)
         self.assertEqual(self.balancer.report_overload(domain), bench)
 
+    def test_last_resort_needs_the_whole_pool_on_a_real_bench(self):
+        for domain in self.domains[1:]:
+            self.balancer.report_failure(domain)
+        # One front is merely held by a dial in flight: someone is already
+        # finding out, no probe on top of that.
+        self.assertEqual(list(self.balancer.get_domains_for_dc(2)), [self.domains[0]])
+        self.assertEqual(self.balancer.last_resort_domains(2), [])
+        self.balancer.report_failure(self.domains[0])
+        probe = self.balancer.last_resort_domains(2)
+        self.assertEqual(len(probe), self.balancer.MAX_ATTEMPTS)
+
+    def test_last_resort_is_rationed_and_does_not_climb_the_ladder(self):
+        for domain in self.domains:
+            self.balancer.report_failure(domain)
+        probe = self.balancer.last_resort_domains(2)
+        self.assertTrue(probe)
+        self.assertEqual(self.balancer.last_resort_domains(2), [],
+                         'one probe round per LAST_RESORT_GAP')
+        for domain in probe:
+            self.balancer.report_failure(domain)
+            self.assertEqual(self.balancer._failures[domain], 1)
+        self.clock.now += self.balancer.LAST_RESORT_GAP + 0.1
+        self.assertTrue(self.balancer.last_resort_domains(2))
+
+    def test_last_resort_prefers_the_fronts_that_failed_least(self):
+        for domain in self.domains:
+            self.balancer.report_failure(domain)
+        self.clock.now += self.balancer.FAILURE_COOLDOWN + 1
+        for domain in self.domains[3:]:
+            self.balancer.report_failure(domain)
+        self.clock.now += 5
+        for domain in self.domains[:3]:
+            self.balancer.report_failure(domain)
+        # Everyone has failed twice; the first three were benched last, so
+        # their bench ends last.
+        self.clock.now += 1
+        probe = self.balancer.last_resort_domains(2)
+        self.assertEqual(len(set(probe)), self.balancer.MAX_ATTEMPTS)
+        self.assertTrue(set(probe) <= set(self.domains[3:]))
+
     def test_a_pool_answering_busy_never_runs_dry(self):
         # The same burst that used to end in "every front on cooldown".
         for _ in range(200):
@@ -129,11 +169,26 @@ class CfFallbackRoundsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.dials), bridge.CF_OVERLOAD_ATTEMPTS)
 
     async def test_a_down_front_still_hands_over_to_the_next_method(self):
-        with self._connect({1: ConnectionResetError(), 2: ConnectionResetError(),
-                            3: ConnectionResetError()}):
+        # Each front is dialled twice now, over TLS and over ws:// (cf_dial):
+        # "down" means neither scheme got through.
+        down = {n: ConnectionResetError() for n in range(1, 2 * bridge.CF_RACE_WIDTH + 1)}
+        with self._connect(down):
             self.assertFalse(await self._fallback())
-        self.assertEqual(len(self.dials), bridge.CF_RACE_WIDTH)
+        self.assertEqual(len(self.dials), 2 * bridge.CF_RACE_WIDTH)
         self.assertEqual(len(self.balancer._failures), bridge.CF_RACE_WIDTH)
+
+    async def test_a_benched_pool_is_probed_instead_of_refusing_the_client(self):
+        # Live 2026-11-25: with every front on cooldown each client was turned
+        # away right after its handshake, for a minute and more.
+        for domain in self.balancer.domains:
+            self.balancer.report_failure(domain)
+        self.assertEqual(list(self.balancer.get_domains_for_dc(2)), [])
+        ws = _Ws('winner')
+        with self._connect({1: ws}):
+            self.assertTrue(await self._fallback())
+        self.assertEqual(ws.sent, [b'init'])
+        # The front that answered is off the bench for everyone after it.
+        self.assertEqual(len(list(self.balancer.get_domains_for_dc(2))), 1)
 
     async def test_the_losers_of_a_race_are_closed(self):
         # Two fronts answer 101 in the same tick: one carries the session,
@@ -166,8 +221,10 @@ class CfFallbackRoundsTest(unittest.IsolatedAsyncioTestCase):
 
         with mock.patch.object(bridge.RawWebSocket, 'connect', side_effect=connect):
             self.assertTrue(await asyncio.wait_for(self._fallback(), 2))
-        await asyncio.sleep(0)
-        self.assertTrue(slow_cancelled.is_set())
+        # The dial sits one task deeper now (cf_dial hedges the scheme), so
+        # the cancellation takes a loop turn more to reach it; how many is the
+        # event loop's business, not this test's.
+        await asyncio.wait_for(slow_cancelled.wait(), 1)
 
 
 if __name__ == '__main__':

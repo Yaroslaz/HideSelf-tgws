@@ -31,6 +31,7 @@ from .fake_tls import (
     SERVER_HELLO_DELAY, replay_cache,
 )
 from .balancer import balancer
+from .cf_dial import scheme_memory
 from .pool import ws_pool, cf_worker_pool
 from .cf_h2 import CfH2Pool
 from .network_debug import log_ws_flow
@@ -391,6 +392,7 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
     reset_tcp_backoff()
     ws_pool.reset()
     cf_worker_pool.reset()
+    scheme_memory.reset()
     _client_tasks.clear()
     cf_h2_pool = CfH2Pool() if proxy_config.h2_enabled else None
 
@@ -636,7 +638,13 @@ def main():
     ap.add_argument('--no-cfproxy', action='store_true',
                     help='Disable Cloudflare proxy fallback')
     ap.add_argument('--no-secure', action='store_true',
-                        help='Use 80 port for CF-proxy and CF-worker connections')
+                        help='Use only 80 port for CF-proxy and CF-worker '
+                             'connections (without this flag it is tried '
+                             'by itself when TLS gets no answer)')
+    ap.add_argument('--stall-timeout', type=float, default=6.0,
+                    metavar='SECONDS',
+                    help='Close a session whose requests stay unanswered '
+                         'for this long (default 6, 0 to disable)')
     ap.add_argument('--fake-tls-domain', type=str, default='',
                     metavar='DOMAIN',
                     help='Enable Fake TLS (ee-secret) masking with the given '
@@ -690,6 +698,7 @@ def main():
     proxy_config.cfproxy_worker_domains = coerce_domain_list(args.cfproxy_worker_domain)
     proxy_config.cfproxy_h2_media = not args.no_h2
     proxy_config.disable_secure = args.no_secure
+    proxy_config.stall_timeout = max(0.0, args.stall_timeout)
     proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
     proxy_config.proxy_protocol = args.proxy_protocol
     proxy_config.force_test_dc = args.force_test_dc

@@ -15,6 +15,7 @@ class _Stats:
         self.connections_bad = 0
         self.connections_masked = 0
         self.ws_errors = 0
+        self.ws_stalled = 0
         self.bytes_up = 0
         self.bytes_down = 0
         self.pool_hits = 0
@@ -42,6 +43,7 @@ class _Stats:
                 f"bad={self.connections_bad} "
                 f"masked={self.connections_masked} "
                 f"err={self.ws_errors} "
+                f"stalled={self.ws_stalled} "
                 f"pool={pool_s} "
                 f"cf_pool={cf_pool_s} "
                 f"up={human_bytes(self.bytes_up)} "

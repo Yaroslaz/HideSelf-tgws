@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 from typing import Dict, List, Optional, Tuple
 
 from .raw_websocket import RawWebSocket, WsHandshakeError
+from .cf_dial import connect_cf
 from .stats import stats
 from .config import proxy_config
 from .utils import (ws_domains, ws_sni_alternatives, DC_DEFAULT_IPS,
@@ -462,9 +463,8 @@ class _CfWorkerPool:
         path = f'/apiws?{query}'
         for worker_domain in self.available_domains(worker_domains):
             try:
-                ws = await RawWebSocket.connect(
-                    worker_domain, worker_domain, timeout=8, path=path,
-                    secure=not proxy_config.disable_secure)
+                ws = await connect_cf(worker_domain, worker_domain,
+                                      worker_domain, timeout=8, path=path)
                 return ws, worker_domain
             except Exception as exc:
                 log.debug("CF worker pool connect DC%d via %s for %s failed: %r",
